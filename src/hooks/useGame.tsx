@@ -80,15 +80,12 @@ const ACTION_HOURS: Record<string, number> = {
   rest: 8,
   explore: 5,
   tend: 2,
+  eat: 1,
 };
 
 export function useGame() {
-  const [skills, setSkills] = useState<Skills>({ fireMastery: false, hunting: false, exploration: false });
-
-  // load persisted skills on client mount to avoid mismatched server render
-  useEffect(() => {
-    setSkills(loadSkills());
-  }, []);
+  // Initialize from localStorage once on mount; guarded inside loadSkills()
+  const [skills, setSkills] = useState<Skills>(() => loadSkills());
 
   const [state, setState] = useState<GameState>(() => ({
     fire: 5,
@@ -111,22 +108,13 @@ export function useGame() {
   }));
 
   useEffect(() => {
-    // persist skills
+    // persist skills only
     saveSkills(skills);
-    // sync into the game state if it differs
-    setState((s) => {
-      const same =
-        s.skills.fireMastery === skills.fireMastery &&
-        s.skills.hunting === skills.hunting &&
-        s.skills.exploration === skills.exploration;
-      if (same) return s;
-      return { ...s, skills } as GameState;
-    });
   }, [skills]);
 
   // local helpers kept inline in main logic
 
-  function performAction(action: "gather" | "hunt" | "rest" | "explore" | "tend") {
+  function performAction(action: "gather" | "hunt" | "rest" | "explore" | "tend" | "eat") {
     setState((s) => {
       if (!s.isRunning) return s;
       
@@ -148,14 +136,34 @@ export function useGame() {
       if (action === "hunt") {
         const chance = 0.7 + (s.skills.hunting ? 0.15 : 0);
         if (Math.random() < chance) {
-          const food = s.skills.hunting ? 3 : 2;
           const meat = s.skills.hunting ? 2 : 1;
           next.inventory = { ...next.inventory, food: next.inventory.food + meat };
-          next.hunger = clamp(next.hunger + food);
-          next.log = [...next.log, `You hunt for ${hourCost} hours and catch prey. (+${meat} food to inventory, +${food} hunger, ${next.hoursRemaining}h left)`];
+          next.log = [...next.log, `You hunt for ${hourCost} hours and catch prey. (+${meat} food to inventory, ${next.hoursRemaining}h left)`];
         } else {
-          next.hunger = clamp(next.hunger - 1);
           next.log = [...next.log, `You hunt for ${hourCost} hours but find nothing. (${next.hoursRemaining}h left)`];
+        }
+      }
+
+      if (action === "eat") {
+        let hungerGained = 0;
+        let consumed = "";
+        
+        // Prioritize meat over berries for now (can enhance later with choice)
+        if (next.inventory.food > 0) {
+          next.inventory = { ...next.inventory, food: next.inventory.food - 1 };
+          hungerGained = 3;
+          consumed = "meat";
+        } else if (next.inventory.berries > 0) {
+          next.inventory = { ...next.inventory, berries: next.inventory.berries - 1 };
+          hungerGained = 2;
+          consumed = "berries";
+        }
+        
+        if (hungerGained > 0) {
+          next.hunger = clamp(next.hunger + hungerGained);
+          next.log = [...next.log, `You eat ${consumed} for ${hourCost} hour. (+${hungerGained} hunger, ${next.hoursRemaining}h left)`];
+        } else {
+          next.log = [...next.log, `You spend ${hourCost} hour looking for food but have nothing to eat. (${next.hoursRemaining}h left)`];
         }
       }
 
@@ -214,6 +222,36 @@ export function useGame() {
       const remainingXp = s.xp - cost;
       const newState = { ...s, skills: newSkills, xp: remainingXp } as GameState;
       return newState;
+    });
+  }
+
+  // Consume food from inventory. foodType should be either 'food' (meat) or 'berries'.
+  function eatFood(foodType: "food" | "berries", quantity: number) {
+    setState((s) => {
+      if (!s.isRunning) return s;
+
+      const perItemHours = ACTION_HOURS["eat"] || 1;
+      const totalHours = perItemHours * quantity;
+      if (s.hoursRemaining < totalHours) {
+        return { ...s, log: [...s.log, `Not enough hours remaining to eat ${quantity} ${foodType} (${totalHours}h needed, ${s.hoursRemaining}h left)`] } as GameState;
+      }
+
+      const available = s.inventory[foodType] || 0;
+      const use = Math.max(0, Math.min(available, quantity));
+      if (use <= 0) {
+        return { ...s, log: [...s.log, `You try to eat ${foodType} but have none.`] } as GameState;
+      }
+
+      const hungerPerItem = foodType === "food" ? 3 : 2;
+      const totalHunger = hungerPerItem * use;
+
+      const next = { ...s } as GameState;
+      next.inventory = { ...next.inventory, [foodType]: next.inventory[foodType] - use } as Inventory;
+      next.hunger = clamp(next.hunger + totalHunger);
+      next.hoursRemaining = next.hoursRemaining - totalHours;
+      next.log = [...next.log, `You eat ${use} ${foodType} for ${totalHours} hour${totalHours > 1 ? "s" : ""}. (+${totalHunger} hunger, ${next.hoursRemaining}h left)`];
+
+      return next;
     });
   }
 
@@ -279,5 +317,5 @@ export function useGame() {
     });
   }
 
-  return { state, performAction, endDay, unlockSkill, resetRun } as const;
+  return { state, performAction, endDay, unlockSkill, resetRun, eatFood } as const;
 }

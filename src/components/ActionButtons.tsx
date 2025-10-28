@@ -2,7 +2,7 @@
 
 import React from "react";
 
-export type ActionType = "gather" | "hunt" | "rest" | "explore" | "tend";
+export type ActionType = "gather" | "hunt" | "rest" | "explore" | "tend" | "eat";
 
 export default function ActionButtons({
   onAction,
@@ -19,6 +19,7 @@ export default function ActionButtons({
     rest: 8,
     explore: 5,
     tend: 2,
+    eat: 1,
   };
 
   const canAfford = (action: ActionType) => hoursRemaining >= hourCosts[action];
@@ -48,6 +49,14 @@ export default function ActionButtons({
         aria-label="Hunt for food"
       >
         Hunt ({hourCosts.hunt}h)
+      </button>
+      <button
+        className="rounded bg-orange-600 px-3 py-2 text-sm font-medium text-white disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-orange-400"
+        onClick={() => onAction("eat")}
+        disabled={disabled || !canAfford("eat")}
+        aria-label="Eat food from inventory"
+      >
+        Eat ({hourCosts.eat}h)
       </button>
       <button
         className="rounded bg-sky-600 px-3 py-2 text-sm font-medium text-white disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-sky-400"

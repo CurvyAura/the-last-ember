@@ -4,12 +4,12 @@ import React, { useRef, useEffect } from "react";
 
 export default function LogPanel({ log }: { log: string[] }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const bottomRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    // Scroll to bottom whenever log changes
-    if (bottomRef.current) {
-      bottomRef.current.scrollIntoView({ behavior: "smooth" });
+    // Scroll only the panel, not the page
+    const container = containerRef.current;
+    if (container) {
+      container.scrollTop = container.scrollHeight;
     }
   }, [log]);
 
@@ -23,15 +23,12 @@ export default function LogPanel({ log }: { log: string[] }) {
         role="log"
         aria-live="polite"
         aria-atomic="false"
-        tabIndex={0}
       >
         {log.slice(-50).map((line, idx) => (
           <div key={idx} className="whitespace-pre-wrap text-zinc-800 dark:text-zinc-200">
             {line}
           </div>
         ))}
-        {/* Invisible div at the bottom to scroll to */}
-        <div ref={bottomRef} />
       </div>
     </div>
   );
