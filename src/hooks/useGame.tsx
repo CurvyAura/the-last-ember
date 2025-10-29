@@ -53,6 +53,7 @@ export type GameState = {
 
 const STORAGE_KEY = "tle-knowledge";
 const VOICE_KEY = "tle-voice";
+const RUN_KEY = "tle-run";
 
 function clamp(v: number, a = 0, b = 10) {
   return Math.max(a, Math.min(b, v));
@@ -100,6 +101,48 @@ function saveVoiceLevel(level: number) {
   }
 }
 
+function saveRunSnapshot(s: GameState) {
+  try {
+    // Make a shallow-copy that strips any non-serializable pieces (like effect functions on prompts)
+    const toSave: Partial<GameState> = {
+      fire: s.fire,
+      hunger: s.hunger,
+      rest: s.rest,
+      wood: s.wood,
+      daysSurvived: s.daysSurvived,
+      hoursRemaining: s.hoursRemaining,
+      log: s.log,
+      isRunning: s.isRunning,
+      xp: s.xp,
+      skills: s.skills,
+      inventory: s.inventory,
+      voiceLevel: s.voiceLevel,
+      storySeed: s.storySeed,
+      storySerial: s.storySerial,
+      storyFlags: s.storyFlags,
+      storyCooldowns: s.storyCooldowns,
+      recentActions: s.recentActions,
+      // do not persist currentPrompt because it may contain functions (effects)
+      currentPrompt: null,
+    };
+    localStorage.setItem(RUN_KEY, JSON.stringify(toSave));
+  } catch {
+    // ignore storage errors
+  }
+}
+
+function loadRunSnapshot(): Partial<GameState> | null {
+  try {
+    if (typeof window === "undefined") return null;
+    const raw = localStorage.getItem(RUN_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
 // Story EVENTS replaced by local story engine
 
 const ACTION_HOURS: Record<string, number> = {
@@ -126,7 +169,7 @@ export function useGame() {
     hoursRemaining: 24,
     log: [
       "You awaken beside the faint glow of a dying ember — the last warmth in a ruined world.",
-      "The forest is silent. The air tastes of ash. Keep the ember alive."
+      "The forest is silent. The air tastes of ash. Keep the ember alive.",
     ],
     isRunning: true,
     xp: 0,
@@ -179,6 +222,58 @@ export function useGame() {
 
     window.addEventListener("storage", handleStorage);
     return () => window.removeEventListener("storage", handleStorage);
+  }, []);
+
+  
+
+  // Autosave run state whenever it changes (debounced)
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const t = setTimeout(() => {
+      try {
+        saveRunSnapshot(state);
+      } catch {
+        // ignore
+      }
+    }, 1000);
+    return () => clearTimeout(t);
+  }, [state]);
+
+  // Load saved run on mount (client-only). We defer setState slightly to avoid hydration mismatch warnings.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const saved = loadRunSnapshot();
+      if (!saved) return;
+      // Defer to next tick so hydration completes with server-rendered markup first
+      setTimeout(() => {
+        setState((s) => ({
+          ...s,
+          fire: typeof saved.fire === "number" ? saved.fire : s.fire,
+          hunger: typeof saved.hunger === "number" ? saved.hunger : s.hunger,
+          rest: typeof saved.rest === "number" ? saved.rest : s.rest,
+          wood: typeof saved.wood === "number" ? saved.wood : s.wood,
+          daysSurvived: typeof saved.daysSurvived === "number" ? saved.daysSurvived : s.daysSurvived,
+          hoursRemaining: typeof saved.hoursRemaining === "number" ? saved.hoursRemaining : s.hoursRemaining,
+          log: Array.isArray(saved.log) ? saved.log : s.log,
+          isRunning: typeof saved.isRunning === "boolean" ? saved.isRunning : s.isRunning,
+          xp: typeof saved.xp === "number" ? saved.xp : s.xp,
+          skills: saved.skills || s.skills,
+          inventory: saved.inventory || s.inventory,
+          voiceLevel: typeof saved.voiceLevel === "number" ? saved.voiceLevel : s.voiceLevel,
+          storySeed: typeof saved.storySeed === "number" ? saved.storySeed : s.storySeed,
+          storySerial: typeof saved.storySerial === "number" ? saved.storySerial : s.storySerial,
+          storyFlags: saved.storyFlags || s.storyFlags,
+          storyCooldowns: saved.storyCooldowns || s.storyCooldowns,
+          recentActions: saved.recentActions || s.recentActions,
+          currentPrompt: null,
+        }));
+        if (saved.skills) setSkills(saved.skills as Skills);
+        if (typeof saved.voiceLevel === "number") setVoiceLevel(saved.voiceLevel);
+      }, 0);
+    } catch {
+      // ignore
+    }
   }, []);
 
   // local helpers kept inline in main logic
@@ -641,6 +736,11 @@ export function useGame() {
       recentActions: [],
       currentPrompt: null,
     }));
+    try {
+      localStorage.removeItem(RUN_KEY);
+    } catch {
+      // ignore
+    }
   }
 
   function endDay() {
