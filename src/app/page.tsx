@@ -9,6 +9,7 @@ import type { ActionType } from "@/components/ActionButtons";
 import PostRunModal from "@/components/PostRunModal";
 import InventoryPanel from "@/components/InventoryPanel";
 import FoodSelectionModal from "@/components/FoodSelectionModal";
+import ChoiceModal from "@/components/ChoiceModal";
 
 export default function Home() {
   const game = useGame();
@@ -50,16 +51,17 @@ export default function Home() {
                   game.performAction(a);
                 }
               }}
-              disabled={!game.state.isRunning}
+              disabled={!game.state.isRunning || !!game.state.currentPrompt}
               hoursRemaining={game.state.hoursRemaining}
               canEat={(game.state.inventory.food || 0) > 0 || (game.state.inventory.berries || 0) > 0}
+              canOffer={(game.state.inventory.artifacts || 0) > 0 && (game.state.storyCooldowns["ability:offer-ember"] ?? -1) <= game.state.daysSurvived}
             />
 
             <div className="mt-4">
               <button
                 className="w-full rounded bg-indigo-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-400"
                 onClick={game.endDay}
-                disabled={!game.state.isRunning}
+                disabled={!game.state.isRunning || !!game.state.currentPrompt}
                 aria-label="End current day"
               >
                 End Day ({game.state.hoursRemaining}h remaining)
@@ -89,6 +91,20 @@ export default function Home() {
             // eslint-disable-next-line @typescript-eslint/ban-ts-comment
             // @ts-ignore
             game.eatFood(foodType, qty);
+          }}
+        />
+        <ChoiceModal
+          open={!!game.state.currentPrompt}
+          title={game.state.currentPrompt?.title}
+          body={game.state.currentPrompt?.body}
+          options={(game.state.currentPrompt?.options || []).map((o) => ({ label: o.label, description: o.description }))}
+          onSelect={(idx) => {
+            // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+            // @ts-ignore
+            game.respondToPrompt(idx);
+          }}
+          onClose={() => {
+            // For now, closing without choosing leaves the prompt; user must choose to proceed
           }}
         />
       </main>

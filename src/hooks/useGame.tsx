@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { makeEngine, applyStoryResult } from "@/lib/story/engine";
-import type { GameView } from "@/lib/story/types";
+import type { GameView, RNG, StoryResult } from "@/lib/story/types";
 
 export type Skills = {
   fireMastery: boolean;
@@ -34,7 +34,14 @@ export type GameState = {
   storySerial: number; // increments each action for deterministic variety
   storyFlags: Record<string, boolean | number>;
   storyCooldowns: Record<string, number>;
-  recentActions: Array<"gather" | "hunt" | "rest" | "explore" | "tend" | "eat">;
+  recentActions: Array<"gather" | "hunt" | "rest" | "explore" | "tend" | "eat" | "offer">;
+  currentPrompt: null | {
+    id: string;
+    title?: string;
+    body?: string;
+    options: Array<{ label: string; description?: string; _key: string }>;
+    _effects: Record<string, (s: GameView, ctx: { action: "explore"; day: number; hoursRemaining: number }, rng: RNG) => Pick<StoryResult, "logs" | "delta" | "flags" | "cooldownDays">>;
+  };
 };
 
 const STORAGE_KEY = "tle-knowledge";
@@ -75,6 +82,7 @@ const ACTION_HOURS: Record<string, number> = {
   explore: 5,
   tend: 2,
   eat: 1,
+  offer: 1,
 };
 
 export function useGame() {
@@ -103,6 +111,7 @@ export function useGame() {
     storyFlags: {},
     storyCooldowns: {},
     recentActions: [],
+    currentPrompt: null,
   }));
 
   useEffect(() => {
@@ -112,7 +121,7 @@ export function useGame() {
 
   // local helpers kept inline in main logic
 
-  function performAction(action: "gather" | "hunt" | "rest" | "explore" | "tend" | "eat") {
+  function performAction(action: "gather" | "hunt" | "rest" | "explore" | "tend" | "eat" | "offer") {
     setState((s) => {
       if (!s.isRunning) return s;
       
@@ -172,6 +181,25 @@ export function useGame() {
         next.log = [...next.log, `You rest for ${hourCost} hours. (+${gain} rest, ${next.hoursRemaining}h left)`];
       }
 
+      if (action === "offer") {
+        // One-day cooldown key
+        const cdKey = "ability:offer-ember";
+        const lockUntil = s.storyCooldowns[cdKey];
+        const onCooldown = typeof lockUntil === "number" && s.daysSurvived < lockUntil;
+
+        if (onCooldown) {
+          next.log = [...next.log, `You kneel to offer, but the ember takes nothing today. (${next.hoursRemaining}h left)`];
+        } else if (next.inventory.artifacts > 0) {
+          next.inventory = { ...next.inventory, artifacts: next.inventory.artifacts - 1 };
+          next.fire = clamp(next.fire + 4);
+          next.rest = clamp(next.rest + 1);
+          next.storyCooldowns = { ...next.storyCooldowns, [cdKey]: s.daysSurvived + 1 };
+          next.log = [...next.log, `You offer a relic to the ember. It flares, warm and bright. (+4 fire, +1 rest, ${next.hoursRemaining}h left)`];
+        } else {
+          next.log = [...next.log, `You search your pack for anything sacred to offer, but find nothing. (${next.hoursRemaining}h left)`];
+        }
+      }
+
       if (action === "explore") {
         // Procedural story engine: always attempt a major beat on explore
         const engine = makeEngine(next.storySeed + next.storySerial, { risk: "moderate" });
@@ -190,25 +218,48 @@ export function useGame() {
         const ctx = { action: "explore" as const, day: next.daysSurvived, hoursRemaining: next.hoursRemaining };
         const beat = engine.generateStoryBeat(view, ctx);
         if (beat) {
-          const applied = applyStoryResult(view, ctx, beat);
-          // apply delta safely
-          const d = applied.delta || {};
-          if (typeof d.fire === "number") next.fire = clamp(next.fire + d.fire);
-          if (typeof d.hunger === "number") next.hunger = clamp(next.hunger + d.hunger);
-          if (typeof d.rest === "number") next.rest = clamp(next.rest + d.rest);
-          if (typeof d.wood === "number") next.wood = Math.max(0, next.wood + d.wood);
-          if (d.inventory) {
-            next.inventory = {
-              ...next.inventory,
-              wood: Math.max(0, next.inventory.wood + (d.inventory.wood || 0)),
-              food: Math.max(0, next.inventory.food + (d.inventory.food || 0)),
-              berries: Math.max(0, next.inventory.berries + (d.inventory.berries || 0)),
-              artifacts: Math.max(0, next.inventory.artifacts + (d.inventory.artifacts || 0)),
+          // If interactive prompt, defer delta application until user chooses
+          if (beat.prompt) {
+            // Set seen flag and cooldown now
+            const applied = applyStoryResult(view, ctx, { ...beat, delta: undefined, logs: beat.logs || [] });
+            next.storyFlags = applied.nextFlags;
+            next.storyCooldowns = applied.nextCooldowns;
+            if (applied.logs?.length) next.log = [...next.log, ...applied.logs.map((l) => l.trim())];
+            // Prepare prompt in state with effect functions mapped by key
+            const effectsMap: Record<string, (s: GameView, ctx: { action: "explore"; day: number; hoursRemaining: number }, rng: RNG) => Pick<StoryResult, "logs" | "delta" | "flags" | "cooldownDays">> = {};
+            const options = beat.prompt.options.map((opt, idx) => {
+              const key = `${beat.id || "prompt"}:${idx}`;
+              effectsMap[key] = opt.effect;
+              return { label: opt.label, description: opt.description, _key: key };
+            });
+            next.currentPrompt = {
+              id: beat.id || "",
+              title: beat.prompt.title,
+              body: beat.prompt.body,
+              options,
+              _effects: effectsMap,
             };
+          } else {
+            const applied = applyStoryResult(view, ctx, beat);
+            // apply delta safely
+            const d = applied.delta || {};
+            if (typeof d.fire === "number") next.fire = clamp(next.fire + d.fire);
+            if (typeof d.hunger === "number") next.hunger = clamp(next.hunger + d.hunger);
+            if (typeof d.rest === "number") next.rest = clamp(next.rest + d.rest);
+            if (typeof d.wood === "number") next.wood = Math.max(0, next.wood + d.wood);
+            if (d.inventory) {
+              next.inventory = {
+                ...next.inventory,
+                wood: Math.max(0, next.inventory.wood + (d.inventory.wood || 0)),
+                food: Math.max(0, next.inventory.food + (d.inventory.food || 0)),
+                berries: Math.max(0, next.inventory.berries + (d.inventory.berries || 0)),
+                artifacts: Math.max(0, next.inventory.artifacts + (d.inventory.artifacts || 0)),
+              };
+            }
+            next.storyFlags = applied.nextFlags;
+            next.storyCooldowns = applied.nextCooldowns;
+            next.log = [...next.log, ...applied.logs.map((l) => l.trim())];
           }
-          next.storyFlags = applied.nextFlags;
-          next.storyCooldowns = applied.nextCooldowns;
-          next.log = [...next.log, ...applied.logs.map((l) => l.trim())];
         } else {
           next.log = [...next.log, `You explore for ${hourCost} hours. (${next.hoursRemaining}h left)`];
         }
@@ -301,6 +352,60 @@ export function useGame() {
     });
   }
 
+  // Respond to an interactive story prompt by option index
+  function respondToPrompt(optionIndex: number) {
+    setState((s) => {
+      if (!s.isRunning) return s;
+      if (!s.currentPrompt) return s;
+      const prompt = s.currentPrompt;
+      const opt = prompt.options[optionIndex];
+      if (!opt) return s;
+
+      const engine = makeEngine(s.storySeed + s.storySerial + 7, { risk: "moderate" });
+      const view: GameView = {
+        fire: s.fire,
+        hunger: s.hunger,
+        rest: s.rest,
+        wood: s.wood,
+        daysSurvived: s.daysSurvived,
+        hoursRemaining: s.hoursRemaining,
+        skills: s.skills,
+        inventory: s.inventory,
+        storyFlags: s.storyFlags,
+        storyCooldowns: s.storyCooldowns,
+      };
+      const ctx = { action: "explore" as const, day: s.daysSurvived, hoursRemaining: s.hoursRemaining };
+      const effectFn = prompt._effects[opt._key];
+      if (!effectFn) return s;
+
+      const res = effectFn(view, ctx, engine.rng);
+      const next = { ...s } as GameState;
+      // apply delta
+      const d = res.delta || {};
+      if (typeof d.fire === "number") next.fire = clamp(next.fire + d.fire);
+      if (typeof d.hunger === "number") next.hunger = clamp(next.hunger + d.hunger);
+      if (typeof d.rest === "number") next.rest = clamp(next.rest + d.rest);
+      if (typeof d.wood === "number") next.wood = Math.max(0, next.wood + d.wood);
+      if (d.inventory) {
+        next.inventory = {
+          ...next.inventory,
+          wood: Math.max(0, next.inventory.wood + (d.inventory.wood || 0)),
+          food: Math.max(0, next.inventory.food + (d.inventory.food || 0)),
+          berries: Math.max(0, next.inventory.berries + (d.inventory.berries || 0)),
+          artifacts: Math.max(0, next.inventory.artifacts + (d.inventory.artifacts || 0)),
+        };
+      }
+      // flags/cooldowns from option
+      next.storyFlags = { ...next.storyFlags, ...(res.flags || {}) };
+      if (typeof res.cooldownDays === "number" && (prompt.id || "")) {
+        next.storyCooldowns = { ...next.storyCooldowns, [prompt.id!]: s.daysSurvived + res.cooldownDays };
+      }
+      next.log = [...next.log, ...(res.logs || []).map((l) => l.trim())];
+      next.currentPrompt = null;
+      return next;
+    });
+  }
+
   function resetRun() {
     setState((s) => ({
       fire: 5,
@@ -324,6 +429,7 @@ export function useGame() {
       storyFlags: {},
       storyCooldowns: {},
       recentActions: [],
+      currentPrompt: null,
     }));
   }
 
@@ -367,5 +473,5 @@ export function useGame() {
     });
   }
 
-  return { state, performAction, endDay, unlockSkill, resetRun, eatFood } as const;
+  return { state, performAction, endDay, unlockSkill, resetRun, eatFood, respondToPrompt } as const;
 }

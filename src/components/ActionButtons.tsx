@@ -2,18 +2,20 @@
 
 import React from "react";
 
-export type ActionType = "gather" | "hunt" | "rest" | "explore" | "tend" | "eat";
+export type ActionType = "gather" | "hunt" | "rest" | "explore" | "tend" | "eat" | "offer";
 
 export default function ActionButtons({
   onAction,
   disabled,
   hoursRemaining,
   canEat = true,
+  canOffer = false,
 }: {
   onAction: (a: ActionType) => void;
   disabled?: boolean;
   hoursRemaining: number;
   canEat?: boolean;
+  canOffer?: boolean;
 }) {
   const hourCosts = {
     gather: 4,
@@ -22,6 +24,7 @@ export default function ActionButtons({
     explore: 5,
     tend: 2,
     eat: 1,
+    offer: 1,
   };
 
   const canAfford = (action: ActionType) => hoursRemaining >= hourCosts[action];
@@ -59,6 +62,14 @@ export default function ActionButtons({
         aria-label="Eat food from inventory"
       >
         Eat ({hourCosts.eat}h)
+      </button>
+      <button
+        className="rounded bg-red-600 px-3 py-2 text-sm font-medium text-white disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-400"
+        onClick={() => onAction("offer")}
+        disabled={disabled || !canAfford("offer") || !canOffer}
+        aria-label="Offer an artifact to the ember"
+      >
+        Offer to the Ember ({hourCosts.offer}h)
       </button>
       <button
         className="rounded bg-sky-600 px-3 py-2 text-sm font-medium text-white disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-sky-400"

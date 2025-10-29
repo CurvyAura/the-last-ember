@@ -1,7 +1,7 @@
 export type RiskLevel = "light" | "moderate" | "spiky";
 
 export type ActionContext = {
-  action: "gather" | "hunt" | "rest" | "explore" | "tend" | "eat";
+  action: "gather" | "hunt" | "rest" | "explore" | "tend" | "eat" | "offer";
   day: number;
   hoursRemaining: number;
 };
@@ -25,6 +25,7 @@ export type StoryResult = {
   delta?: StoryDelta;
   flags?: Record<string, boolean | number>;
   cooldownDays?: number; // if set, next allowed day = current day + cooldownDays
+  prompt?: StoryPrompt; // optional interactive follow-up
 };
 
 export type GameView = {
@@ -58,3 +59,18 @@ export interface RNG {
   int(min: number, max: number): number; // inclusive
   pick<T>(arr: T[]): T;
 }
+
+export type StoryPromptOption = {
+  id?: string;
+  label: string;
+  description?: string;
+  // Option effect applied when chosen
+  effect: (s: GameView, ctx: ActionContext, rng: RNG) => Pick<StoryResult, "logs" | "delta" | "flags" | "cooldownDays">;
+};
+
+export type StoryPrompt = {
+  id?: string;
+  title?: string;
+  body?: string;
+  options: StoryPromptOption[];
+};

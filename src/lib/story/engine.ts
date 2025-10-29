@@ -79,6 +79,10 @@ export function makeEngine(seed: number, opts: Partial<EngineOptions> = {}) {
         "Warmth spreads as you swallow.",
         "It isn't much, but it steadies you.",
       ],
+      offer: [
+        "For a moment the ember draws breath.",
+        "Ash eddies, then settles.",
+      ],
       explore: [],
     };
     const lines = base[ctx.action] || [];
