@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { makeEngine, applyStoryResult } from "@/lib/story/engine";
+import type { GameView } from "@/lib/story/types";
 
 export type Skills = {
   fireMastery: boolean;
@@ -12,7 +14,6 @@ export type Inventory = {
   wood: number;
   food: number;
   berries: number;
-  tools: number;
   artifacts: number;
 };
 
@@ -28,6 +29,12 @@ export type GameState = {
   xp: number;
   skills: Skills;
   inventory: Inventory;
+  // procedural story state
+  storySeed: number;
+  storySerial: number; // increments each action for deterministic variety
+  storyFlags: Record<string, boolean | number>;
+  storyCooldowns: Record<string, number>;
+  recentActions: Array<"gather" | "hunt" | "rest" | "explore" | "tend" | "eat">;
 };
 
 const STORAGE_KEY = "tle-knowledge";
@@ -59,20 +66,7 @@ function saveSkills(skills: Skills) {
   }
 }
 
-const EVENTS: Array<{ text: string; apply: (s: GameState) => Partial<GameState> }> = [
-  {
-    text: "You find a small stream.",
-    apply: (s) => ({ rest: clamp(s.rest + 1), log: s.log }),
-  },
-  {
-    text: "A wild animal appears but runs away.",
-    apply: (s) => ({ log: s.log }),
-  },
-  {
-    text: "You find some berries.",
-    apply: (s) => ({ hunger: clamp(s.hunger + 2), log: s.log }),
-  },
-];
+// Story EVENTS replaced by local story engine
 
 const ACTION_HOURS: Record<string, number> = {
   gather: 4,
@@ -102,9 +96,13 @@ export function useGame() {
       wood: 0,
       food: 0,
       berries: 0,
-      tools: 0,
       artifacts: 0,
     },
+    storySeed: Math.floor(Math.random() * 0xffffffff) >>> 0,
+    storySerial: 0,
+    storyFlags: {},
+    storyCooldowns: {},
+    recentActions: [],
   }));
 
   useEffect(() => {
@@ -123,8 +121,9 @@ export function useGame() {
         return { ...s, log: [...s.log, `Not enough hours remaining for ${action} (${hourCost}h needed, ${s.hoursRemaining}h left)`] };
       }
 
-      let next = { ...s } as GameState;
+  const next = { ...s } as GameState;
       next.hoursRemaining = s.hoursRemaining - hourCost;
+      next.storySerial = s.storySerial + 1;
 
       if (action === "gather") {
         const gained = 2;
@@ -174,20 +173,44 @@ export function useGame() {
       }
 
       if (action === "explore") {
-        const ev = EVENTS[Math.floor(Math.random() * EVENTS.length)];
-        next = { ...next, ...ev.apply(next) } as GameState;
-        
-        // Add chance to find items while exploring
-        const findChance = Math.random();
-        if (findChance < 0.3) {
-          const berries = 1 + Math.floor(Math.random() * 2); // 1-2 berries
-          next.inventory = { ...next.inventory, berries: next.inventory.berries + berries };
-          next.log = [...next.log, `You explore for ${hourCost} hours. ${ev.text} Found ${berries} berries! (${next.hoursRemaining}h left)`];
-        } else if (findChance < 0.4) {
-          next.inventory = { ...next.inventory, artifacts: next.inventory.artifacts + 1 };
-          next.log = [...next.log, `You explore for ${hourCost} hours. ${ev.text} Found an interesting artifact! (${next.hoursRemaining}h left)`];
+        // Procedural story engine: always attempt a major beat on explore
+        const engine = makeEngine(next.storySeed + next.storySerial, { risk: "moderate" });
+        const view: GameView = {
+          fire: next.fire,
+          hunger: next.hunger,
+          rest: next.rest,
+          wood: next.wood,
+          daysSurvived: next.daysSurvived,
+          hoursRemaining: next.hoursRemaining,
+          skills: next.skills,
+          inventory: next.inventory,
+          storyFlags: next.storyFlags,
+          storyCooldowns: next.storyCooldowns,
+        };
+        const ctx = { action: "explore" as const, day: next.daysSurvived, hoursRemaining: next.hoursRemaining };
+        const beat = engine.generateStoryBeat(view, ctx);
+        if (beat) {
+          const applied = applyStoryResult(view, ctx, beat);
+          // apply delta safely
+          const d = applied.delta || {};
+          if (typeof d.fire === "number") next.fire = clamp(next.fire + d.fire);
+          if (typeof d.hunger === "number") next.hunger = clamp(next.hunger + d.hunger);
+          if (typeof d.rest === "number") next.rest = clamp(next.rest + d.rest);
+          if (typeof d.wood === "number") next.wood = Math.max(0, next.wood + d.wood);
+          if (d.inventory) {
+            next.inventory = {
+              ...next.inventory,
+              wood: Math.max(0, next.inventory.wood + (d.inventory.wood || 0)),
+              food: Math.max(0, next.inventory.food + (d.inventory.food || 0)),
+              berries: Math.max(0, next.inventory.berries + (d.inventory.berries || 0)),
+              artifacts: Math.max(0, next.inventory.artifacts + (d.inventory.artifacts || 0)),
+            };
+          }
+          next.storyFlags = applied.nextFlags;
+          next.storyCooldowns = applied.nextCooldowns;
+          next.log = [...next.log, ...applied.logs.map((l) => l.trim())];
         } else {
-          next.log = [...next.log, `You explore for ${hourCost} hours. ${ev.text} (${next.hoursRemaining}h left)`];
+          next.log = [...next.log, `You explore for ${hourCost} hours. (${next.hoursRemaining}h left)`];
         }
       }
 
@@ -205,6 +228,29 @@ export function useGame() {
           next.log = [...next.log, `You spend ${hourCost} hours tending the fire, but have no wood to burn. (${next.hoursRemaining}h left)`];
         }
       }
+
+      // light flavor for other actions (engine handles probability)
+      if (action !== "explore") {
+        const engine = makeEngine(next.storySeed + next.storySerial, { risk: "moderate" });
+        const view: GameView = {
+          fire: next.fire,
+          hunger: next.hunger,
+          rest: next.rest,
+          wood: next.wood,
+          daysSurvived: next.daysSurvived,
+          hoursRemaining: next.hoursRemaining,
+          skills: next.skills,
+          inventory: next.inventory,
+          storyFlags: next.storyFlags,
+          storyCooldowns: next.storyCooldowns,
+        };
+        const ctx = { action, day: next.daysSurvived, hoursRemaining: next.hoursRemaining } as const;
+        const line = engine.generateFlavor(view, ctx);
+        if (line) next.log = [...next.log, line];
+      }
+
+      // track recent actions
+      next.recentActions = [...next.recentActions, action].slice(-6);
 
       return next;
     });
@@ -271,9 +317,13 @@ export function useGame() {
         wood: 0,
         food: 0,
         berries: 0,
-        tools: 0,
         artifacts: 0,
       },
+      storySeed: Math.floor(Math.random() * 0xffffffff) >>> 0,
+      storySerial: 0,
+      storyFlags: {},
+      storyCooldowns: {},
+      recentActions: [],
     }));
   }
 

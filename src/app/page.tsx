@@ -22,7 +22,7 @@ export default function Home() {
       </a>
       <main id="main-content" className="mx-auto max-w-3xl space-y-6">
         <header className="flex items-center justify-between">
-          <h1 className="text-2xl font-semibold">The Last Ember — Text MVP</h1>
+          <h1 className="text-2xl font-semibold">The Last Ember</h1>
           <a className="text-sm underline" href="/knowledge">
             Knowledge Tree
           </a>
@@ -52,6 +52,7 @@ export default function Home() {
               }}
               disabled={!game.state.isRunning}
               hoursRemaining={game.state.hoursRemaining}
+              canEat={(game.state.inventory.food || 0) > 0 || (game.state.inventory.berries || 0) > 0}
             />
 
             <div className="mt-4">

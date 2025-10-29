@@ -36,11 +36,15 @@ export default function PostRunModal({ open, xp, onSpend, onReset, unlocked, }: 
           <SkillRow name="Exploration" unlocked={unlocked.exploration} xp={xp} cost={cost} onSpend={() => onSpend("exploration")} />
         </div>
 
-        <div className="mt-6 flex justify-between">
-          <button className="rounded bg-zinc-200 px-3 py-2 text-sm" onClick={onReset}>
-            Start new run
+        <div className="mt-6 flex items-center justify-between">
+          <button
+            className="rounded bg-indigo-600 px-4 py-2 text-sm font-medium text-white focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-400 disabled:opacity-50"
+            onClick={onReset}
+            aria-label="Start a new run"
+          >
+            Start New Run
           </button>
-          <span className="text-sm text-zinc-500">XP left: {xp}</span>
+          <span className="text-sm text-zinc-600 dark:text-zinc-400">XP left: {xp}</span>
         </div>
       </div>
     </div>

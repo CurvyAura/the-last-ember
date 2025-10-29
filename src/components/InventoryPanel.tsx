@@ -21,10 +21,6 @@ export default function InventoryPanel({ inventory }: { inventory: Inventory }) 
           <span className="font-medium">{inventory.berries}</span>
         </li>
         <li className="flex justify-between text-sm">
-          <span>🔧 Tools</span>
-          <span className="font-medium">{inventory.tools}</span>
-        </li>
-        <li className="flex justify-between text-sm">
           <span>🏺 Artifacts</span>
           <span className="font-medium">{inventory.artifacts}</span>
         </li>

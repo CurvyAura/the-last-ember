@@ -15,7 +15,6 @@ export default function StatsPanel({ state }: { state: GameState }) {
           <BarStat label="Fire" value={state.fire} emoji="🔥" />
           <BarStat label="Hunger" value={state.hunger} emoji="🍖" />
           <BarStat label="Rest" value={state.rest} emoji="💤" />
-          <BarStat label="Wood" value={Math.min(10, state.wood)} emoji="🪵" />
         </div>
 
         <div className="flex gap-3 text-sm text-zinc-600 dark:text-zinc-300">

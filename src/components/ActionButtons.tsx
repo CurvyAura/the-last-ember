@@ -8,10 +8,12 @@ export default function ActionButtons({
   onAction,
   disabled,
   hoursRemaining,
+  canEat = true,
 }: {
   onAction: (a: ActionType) => void;
   disabled?: boolean;
   hoursRemaining: number;
+  canEat?: boolean;
 }) {
   const hourCosts = {
     gather: 4,
@@ -53,7 +55,7 @@ export default function ActionButtons({
       <button
         className="rounded bg-orange-600 px-3 py-2 text-sm font-medium text-white disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-orange-400"
         onClick={() => onAction("eat")}
-        disabled={disabled || !canAfford("eat")}
+        disabled={disabled || !canAfford("eat") || !canEat}
         aria-label="Eat food from inventory"
       >
         Eat ({hourCosts.eat}h)
