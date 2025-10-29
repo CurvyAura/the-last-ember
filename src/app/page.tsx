@@ -26,7 +26,7 @@ export default function Home() {
       <main id="main-content" className="mx-auto max-w-3xl space-y-6">
         <header className="flex items-center justify-between">
           <h1 className="text-2xl font-semibold">The Last Ember</h1>
-          <a className="text-sm underline" href="/knowledge" target="_blank" rel="noopener noreferrer">
+          <a className="text-sm underline" href="/knowledge">
             Knowledge Tree
           </a>
         </header>
