@@ -24,8 +24,18 @@ export function makeEngine(seed: number, opts: Partial<EngineOptions> = {}) {
   }
 
   function weightOf(s: GameView, ctx: ActionContext, lette: Storylet): number {
-    const w = typeof lette.weight === "function" ? lette.weight(s, ctx) : (lette.weight ?? 1);
-    // risk-based scaling could go here later; for now moderate leaves weights as-is
+    let w = typeof lette.weight === "function" ? lette.weight(s, ctx) : (lette.weight ?? 1);
+    const tags = lette.tags || [];
+    // Tag-based bias: surface more "interesting" outcomes (find/boon/wildlife), tone down signs/lore/hazard a bit
+    const has = (t: string) => tags.includes(t);
+    if (has("find")) w *= 1.4;
+    if (has("boon")) w *= 1.25;
+    if (has("wildlife")) w *= 1.15;
+    if (has("hazard")) w *= 0.9;
+    if (has("signs")) w *= 0.85;
+    if (has("lore")) w *= 0.9;
+    // Mild day-based ramp so runs feel more eventful after Day 2
+    if (ctx.day >= 2) w *= 1.1;
     return Math.max(0, w);
   }
 

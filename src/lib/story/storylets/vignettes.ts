@@ -29,7 +29,7 @@ export const VIGNETTES: Storylet[] = [
     when: (_s, ctx) => ctx.action === "explore",
     effect: (s, ctx, rng) => {
       void s; void ctx;
-      const caught = rng.int(1, 4) === 1; // 25% chance
+      const caught = rng.int(1, 5) <= 2; // 40% chance
       return {
         logs: caught
           ? ["A hare bolts from cover. You get lucky with a thrown stone. (+1 meat)"]
@@ -56,7 +56,7 @@ export const VIGNETTES: Storylet[] = [
     id: "river:driftwood",
     tags: ["find"],
     cooldownDays: 2,
-    weight: 1.1,
+  weight: 1.2,
     when: (_s, ctx) => ctx.action === "explore",
     effect: (s, ctx, _rng) => {
       void s; void ctx; void _rng;
@@ -105,7 +105,7 @@ export const VIGNETTES: Storylet[] = [
     when: (_s, ctx) => ctx.action === "explore",
     effect: (s, ctx, rng) => {
       void s; void ctx;
-      const full = rng.int(1, 3) === 1; // ~33%
+      const full = rng.int(1, 2) === 1; // 50%
       return {
         logs: full
           ? ["A rusted snare someone left. A small catch hangs stiff. (+1 meat)"]
@@ -118,7 +118,7 @@ export const VIGNETTES: Storylet[] = [
     id: "forage:frosted-berries",
     tags: ["forage"],
     cooldownDays: 1,
-    weight: 1.2,
+  weight: 1.3,
     when: (_s, ctx) => ctx.action === "explore",
     effect: (s, ctx, rng) => {
       void s; void ctx;
@@ -161,7 +161,7 @@ export const VIGNETTES: Storylet[] = [
     tags: ["lore", "find"],
     cooldownDays: 999,
     oncePerRun: true,
-    weight: 0.2,
+  weight: 0.6,
     when: (_s, ctx) => ctx.action === "explore",
     effect: (s, ctx, _rng) => {
       void s; void ctx; void _rng;
@@ -335,7 +335,7 @@ export const VIGNETTES: Storylet[] = [
     when: (_s, ctx) => ctx.action === "explore",
     effect: (s, ctx, rng) => {
       void s; void ctx;
-      const get = rng.int(1, 3) === 1;
+      const get = rng.int(1, 20) <= 9; // ~45%
       return {
         logs: [get ? "A fish is trapped in a shrinking pool between stones. You take it. (+1 meat)" : "A shrinking pool swirls with darting shadows—too quick."],
         delta: get ? { inventory: { meat: 1 } } : undefined,
@@ -432,7 +432,7 @@ export const VIGNETTES: Storylet[] = [
     when: (_s, ctx) => ctx.action === "explore",
     effect: (s, ctx, rng) => {
       void s; void ctx;
-      const rare = rng.int(1, 10) === 1;
+      const rare = rng.int(1, 5) === 1; // 20%
       return {
         logs: [rare ? "A shard of bottle glass, edges melted smooth. You keep it. (+1 artifact)" : "A shard of bottle glass, edges melted smooth."],
         delta: rare ? { inventory: { artifacts: 1 } } : undefined,
@@ -470,8 +470,8 @@ export const VIGNETTES: Storylet[] = [
     when: (_s, ctx) => ctx.action === "explore",
     effect: (s, ctx, rng) => {
       void s; void ctx;
-      const chance = rng.int(1, 5) === 1;
-  return { logs: [chance ? "Ptarmigan burst from underfoot; one doesn’t fly far. (+1 meat)" : "Ptarmigan burst from underfoot in a flurry of snow."], delta: chance ? { inventory: { meat: 1 } } : undefined };
+      const chance = rng.int(1, 10) <= 3; // 30%
+      return { logs: [chance ? "Ptarmigan burst from underfoot; one doesn’t fly far. (+1 meat)" : "Ptarmigan burst from underfoot in a flurry of snow."], delta: chance ? { inventory: { meat: 1 } } : undefined };
     },
   },
   {

@@ -10,11 +10,13 @@ import PostRunModal from "@/components/PostRunModal";
 import InventoryPanel from "@/components/InventoryPanel";
 import FoodSelectionModal from "@/components/FoodSelectionModal";
 import ChoiceModal from "@/components/ChoiceModal";
+import OfferSelectionModal from "@/components/OfferSelectionModal";
 
 export default function Home() {
   const game = useGame();
   const [showFoodModal, setShowFoodModal] = useState(false);
   const [modalKey, setModalKey] = useState(0);
+  const [showOfferModal, setShowOfferModal] = useState(false);
 
   return (
     <div className="min-h-screen bg-zinc-50 dark:bg-black font-sans p-4">
@@ -47,6 +49,14 @@ export default function Home() {
                   } else {
                     game.performAction(a);
                   }
+                } else if (a === "offer") {
+                  const types = game.state.inventory.artifactsByType || { idol: 0, shard: 0, heart: 0, feather: 0 };
+                  const total = (types.idol || 0) + (types.shard || 0) + (types.heart || 0) + (types.feather || 0);
+                  if (total > 0) {
+                    setShowOfferModal(true);
+                  } else {
+                    game.performAction(a);
+                  }
                 } else {
                   game.performAction(a);
                 }
@@ -54,7 +64,7 @@ export default function Home() {
               disabled={!game.state.isRunning || !!game.state.currentPrompt}
               hoursRemaining={game.state.hoursRemaining}
               canEat={(game.state.inventory.meat || 0) > 0 || (game.state.inventory.berries || 0) > 0}
-              canOffer={(game.state.inventory.artifacts || 0) > 0 && (game.state.storyCooldowns["ability:offer-ember"] ?? -1) <= game.state.daysSurvived}
+              canOffer={(() => { const t = game.state.inventory.artifactsByType || { idol: 0, shard: 0, heart: 0, feather: 0 }; const total = (t.idol||0)+(t.shard||0)+(t.heart||0)+(t.feather||0); return total > 0 && (game.state.storyCooldowns["ability:offer-ember"] ?? -1) <= game.state.daysSurvived; })()}
             />
 
             <div className="mt-4">
@@ -105,6 +115,18 @@ export default function Home() {
           }}
           onClose={() => {
             // For now, closing without choosing leaves the prompt; user must choose to proceed
+          }}
+        />
+
+        <OfferSelectionModal
+          open={showOfferModal}
+          onClose={() => setShowOfferModal(false)}
+          inventory={game.state.inventory}
+          onConfirm={(type) => {
+            // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+            // @ts-ignore
+            game.offerArtifact(type);
+            setShowOfferModal(false);
           }}
         />
       </main>

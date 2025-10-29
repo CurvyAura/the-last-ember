@@ -15,6 +15,12 @@ export type Inventory = {
   meat: number;
   berries: number;
   artifacts: number;
+  artifactsByType?: {
+    idol: number;
+    shard: number;
+    heart: number;
+    feather: number;
+  };
 };
 
 export type GameState = {
@@ -29,6 +35,7 @@ export type GameState = {
   xp: number;
   skills: Skills;
   inventory: Inventory;
+  voiceLevel?: number;
   // procedural story state
   storySeed: number;
   storySerial: number; // increments each action for deterministic variety
@@ -45,6 +52,7 @@ export type GameState = {
 };
 
 const STORAGE_KEY = "tle-knowledge";
+const VOICE_KEY = "tle-voice";
 
 function clamp(v: number, a = 0, b = 10) {
   return Math.max(a, Math.min(b, v));
@@ -73,6 +81,25 @@ function saveSkills(skills: Skills) {
   }
 }
 
+function loadVoiceLevel(): number {
+  try {
+    const raw = typeof window !== "undefined" && localStorage.getItem(VOICE_KEY);
+    if (!raw) return 0;
+    const n = Number(JSON.parse(raw));
+    return Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function saveVoiceLevel(level: number) {
+  try {
+    localStorage.setItem(VOICE_KEY, JSON.stringify(Math.max(0, Math.floor(level))));
+  } catch {
+    // ignore
+  }
+}
+
 // Story EVENTS replaced by local story engine
 
 const ACTION_HOURS: Record<string, number> = {
@@ -88,6 +115,7 @@ const ACTION_HOURS: Record<string, number> = {
 export function useGame() {
   // Initialize from localStorage once on mount; guarded inside loadSkills()
   const [skills, setSkills] = useState<Skills>(() => loadSkills());
+  const [voiceLevel, setVoiceLevel] = useState<number>(() => loadVoiceLevel());
 
   const [state, setState] = useState<GameState>(() => ({
     fire: 5,
@@ -96,7 +124,10 @@ export function useGame() {
     wood: 3,
     daysSurvived: 0,
     hoursRemaining: 24,
-    log: ["You wake to a cold dawn. Keep the ember alive."],
+    log: [
+      "You awaken beside the faint glow of a dying ember — the last warmth in a ruined world.",
+      "The forest is silent. The air tastes of ash. Keep the ember alive."
+    ],
     isRunning: true,
     xp: 0,
     skills,
@@ -105,7 +136,9 @@ export function useGame() {
       meat: 0,
       berries: 0,
       artifacts: 0,
+      artifactsByType: { idol: 0, shard: 0, heart: 0, feather: 0 },
     },
+    voiceLevel: voiceLevel,
     storySeed: Math.floor(Math.random() * 0xffffffff) >>> 0,
     storySerial: 0,
     storyFlags: {},
@@ -118,6 +151,10 @@ export function useGame() {
     // persist skills only
     saveSkills(skills);
   }, [skills]);
+
+  useEffect(() => {
+    saveVoiceLevel(voiceLevel);
+  }, [voiceLevel]);
 
   // Mid-run sync: listen for changes to skills in localStorage from other tabs/windows
   useEffect(() => {
@@ -169,7 +206,8 @@ export function useGame() {
       if (action === "hunt") {
         const chance = 0.7 + (s.skills.hunting ? 0.15 : 0);
         if (Math.random() < chance) {
-          const meat = s.skills.hunting ? 2 : 1;
+          let meat = s.skills.hunting ? 2 : 1;
+          if ((s.voiceLevel || 0) >= 2) meat += 1;
           next.inventory = { ...next.inventory, meat: next.inventory.meat + meat };
           next.log = [...next.log, `You hunt for ${hourCost} hours and catch prey. (+${meat} meat to inventory, ${next.hoursRemaining}h left)`];
         } else {
@@ -180,8 +218,6 @@ export function useGame() {
       if (action === "eat") {
         let hungerGained = 0;
         let consumed = "";
-        
-        // Prioritize meat over berries for now (can enhance later with choice)
         if (next.inventory.meat > 0) {
           next.inventory = { ...next.inventory, meat: next.inventory.meat - 1 };
           hungerGained = 3;
@@ -191,7 +227,6 @@ export function useGame() {
           hungerGained = 2;
           consumed = "berries";
         }
-        
         if (hungerGained > 0) {
           next.hunger = clamp(next.hunger + hungerGained);
           next.log = [...next.log, `You eat ${consumed} for ${hourCost} hour. (+${hungerGained} hunger, ${next.hoursRemaining}h left)`];
@@ -201,7 +236,7 @@ export function useGame() {
       }
 
       if (action === "rest") {
-        const gain = 3;
+        const gain = 3 + ((s.voiceLevel || 0) >= 4 ? 1 : 0);
         next.rest = clamp(next.rest + gain);
         next.log = [...next.log, `You rest for ${hourCost} hours. (+${gain} rest, ${next.hoursRemaining}h left)`];
       }
@@ -214,14 +249,19 @@ export function useGame() {
 
         if (onCooldown) {
           next.log = [...next.log, `You kneel to offer, but the ember takes nothing today. (${next.hoursRemaining}h left)`];
-        } else if (next.inventory.artifacts > 0) {
-          next.inventory = { ...next.inventory, artifacts: next.inventory.artifacts - 1 };
-          next.fire = clamp(next.fire + 4);
-          next.rest = clamp(next.rest + 1);
-          next.storyCooldowns = { ...next.storyCooldowns, [cdKey]: s.daysSurvived + 1 };
-          next.log = [...next.log, `You offer a relic to the ember. It flares, warm and bright. (+4 fire, +1 rest, ${next.hoursRemaining}h left)`];
         } else {
-          next.log = [...next.log, `You search your pack for anything sacred to offer, but find nothing. (${next.hoursRemaining}h left)`];
+          const t = pickFirstAvailableArtifact(next.inventory.artifactsByType || { idol: 0, shard: 0, heart: 0, feather: 0 });
+          if (!t) {
+            next.log = [...next.log, `You search your pack for anything sacred to offer, but find nothing. (${next.hoursRemaining}h left)`];
+          } else {
+            const res = internalOfferArtifact(next, s, t);
+            next.inventory = res.inventory;
+            next.fire = res.fire;
+            next.rest = res.rest;
+            next.storyCooldowns = res.storyCooldowns;
+            next.voiceLevel = res.voiceLevel;
+            next.log = [...next.log, ...res.logs];
+          }
         }
       }
 
@@ -241,7 +281,23 @@ export function useGame() {
           storyCooldowns: next.storyCooldowns,
         };
         const ctx = { action: "explore" as const, day: next.daysSurvived, hoursRemaining: next.hoursRemaining };
-        const beat = engine.generateStoryBeat(view, ctx);
+        // Pity timer: guarantee 1st artifact by Day 3; 50% chance on Day 2 if none found
+        const hasAnyArtifact = (next.inventory.artifacts || 0) > 0;
+        const pityGiven = !!next.storyFlags["pity:artifact:given"];
+        let beat = null as ReturnType<typeof engine.generateStoryBeat>;
+        if (!hasAnyArtifact && !pityGiven && (ctx.day >= 3 || (ctx.day >= 2 && engine.rng.int(1, 2) === 1))) {
+          beat = {
+            id: "pity:artifact",
+            logs: [
+              "Half-buried in ash, something glints. You dig it out: a relic. (+1 artifact)",
+            ],
+            delta: { inventory: { artifacts: 1 } },
+            flags: { "pity:artifact:given": true },
+            cooldownDays: 0,
+          };
+        } else {
+          beat = engine.generateStoryBeat(view, ctx);
+        }
         if (beat) {
           // If interactive prompt, defer delta application until user chooses
           if (beat.prompt) {
@@ -273,13 +329,23 @@ export function useGame() {
             if (typeof d.rest === "number") next.rest = clamp(next.rest + d.rest);
             if (typeof d.wood === "number") next.wood = Math.max(0, next.wood + d.wood);
             if (d.inventory) {
-              next.inventory = {
+              let inv = {
                 ...next.inventory,
                 wood: Math.max(0, next.inventory.wood + (d.inventory.wood || 0)),
                 meat: Math.max(0, next.inventory.meat + (d.inventory.meat || 0)),
                 berries: Math.max(0, next.inventory.berries + (d.inventory.berries || 0)),
-                artifacts: Math.max(0, next.inventory.artifacts + (d.inventory.artifacts || 0)),
-              };
+                artifactsByType: next.inventory.artifactsByType || { idol: 0, shard: 0, heart: 0, feather: 0 },
+              } as Inventory;
+              const addArtifacts = d.inventory.artifacts || 0;
+              if (addArtifacts > 0) {
+                for (let i = 0; i < addArtifacts; i++) {
+                  const r = engine.rng.next();
+                  const pick = r < 0.25 ? "idol" : r < 0.5 ? "shard" : r < 0.75 ? "heart" : "feather";
+                  inv.artifactsByType = { ...inv.artifactsByType!, [pick]: (inv.artifactsByType?.[pick] || 0) + 1 } as NonNullable<Inventory["artifactsByType"]>;
+                }
+                inv = syncArtifactTotal(inv);
+              }
+              next.inventory = inv;
             }
             next.storyFlags = applied.nextFlags;
             next.storyCooldowns = applied.nextCooldowns;
@@ -328,6 +394,106 @@ export function useGame() {
       // track recent actions
       next.recentActions = [...next.recentActions, action].slice(-6);
 
+      return next;
+    });
+  }
+
+  type ArtifactType = "idol" | "shard" | "heart" | "feather";
+
+  function sumArtifacts(inv: Inventory) {
+    const t = inv.artifactsByType || { idol: 0, shard: 0, heart: 0, feather: 0 };
+    return (t.idol || 0) + (t.shard || 0) + (t.heart || 0) + (t.feather || 0);
+  }
+
+  function syncArtifactTotal(inv: Inventory): Inventory {
+    const total = sumArtifacts(inv);
+    return { ...inv, artifacts: total };
+  }
+
+  function pickFirstAvailableArtifact(t: NonNullable<Inventory["artifactsByType"]>): ArtifactType | null {
+    if ((t.idol || 0) > 0) return "idol";
+    if ((t.shard || 0) > 0) return "shard";
+    if ((t.heart || 0) > 0) return "heart";
+    if ((t.feather || 0) > 0) return "feather";
+    return null;
+  }
+
+  function internalOfferArtifact(next: GameState, s: GameState, type: ArtifactType) {
+    const cdKey = "ability:offer-ember";
+    const logs: string[] = [];
+    const counts = { ...(next.inventory.artifactsByType || { idol: 0, shard: 0, heart: 0, feather: 0 }) } as NonNullable<Inventory["artifactsByType"]>;
+    counts[type] = Math.max(0, (counts[type] || 0) - 1);
+    let inv = { ...next.inventory, artifactsByType: counts } as Inventory;
+    inv = syncArtifactTotal(inv);
+    const fire = clamp(next.fire + 4);
+    const rest = clamp(next.rest + 1);
+    const newVoice = (s.voiceLevel || 0) + 1;
+
+    const skillCount = Object.values(s.skills).filter(Boolean).length;
+    const voiceRich = newVoice >= 3 || skillCount >= 2;
+    if (type === "idol") {
+      logs.push(`You offer an ancient idol to the ember. (+4 fire, +1 rest, ${next.hoursRemaining}h left)`);
+      logs.push("Gold eyes melt. The ember whispers of forgotten rites.");
+      if (!s.skills.fireMastery) {
+        const newSkills = { ...s.skills, fireMastery: true } as Skills;
+        setSkills(newSkills);
+        next.skills = newSkills;
+        logs.push("A memory settles: how to shelter flame from wind and time. [Fire Mastery unlocked]");
+      }
+    } else if (type === "shard") {
+      logs.push(`You offer a blackened shard. (+4 fire, +1 rest, ${next.hoursRemaining}h left)`);
+      logs.push("It drinks the light and returns a path through the dark.");
+      if (!s.skills.exploration) {
+        const newSkills = { ...s.skills, exploration: true } as Skills;
+        setSkills(newSkills);
+        next.skills = newSkills;
+        logs.push("The world’s edges sharpen. [Exploration unlocked]");
+      }
+    } else if (type === "feather") {
+      logs.push(`You offer a silver feather. (+4 fire, +1 rest, ${next.hoursRemaining}h left)`);
+      logs.push("Ash eddies. Footfalls map themselves in your mind.");
+      if (!s.skills.hunting) {
+        const newSkills = { ...s.skills, hunting: true } as Skills;
+        setSkills(newSkills);
+        next.skills = newSkills;
+        logs.push("Your hands remember the chase. [Hunting unlocked]");
+      }
+    } else if (type === "heart") {
+      logs.push(`You offer a heart of ice. (+4 fire, +1 rest, ${next.hoursRemaining}h left)`);
+      logs.push(voiceRich ? "Steam rises like a prayer. The ember speaks a name you almost know." : "Frost hisses, vanishing to nothing.");
+    }
+
+    const storyCooldowns = { ...s.storyCooldowns, [cdKey]: s.daysSurvived + 1 };
+    return { inventory: inv, fire, rest, voiceLevel: newVoice, storyCooldowns, logs };
+  }
+
+  function offerArtifact(type: ArtifactType) {
+    setState((s) => {
+      if (!s.isRunning) return s;
+      const hourCost = ACTION_HOURS["offer"] || 1;
+      if (s.hoursRemaining < hourCost) {
+        return { ...s, log: [...s.log, `Not enough hours remaining for offer (${hourCost}h needed, ${s.hoursRemaining}h left)`] } as GameState;
+      }
+      const cdKey = "ability:offer-ember";
+      const lockUntil = s.storyCooldowns[cdKey];
+      const onCooldown = typeof lockUntil === "number" && s.daysSurvived < lockUntil;
+      if (onCooldown) {
+        return { ...s, hoursRemaining: s.hoursRemaining - hourCost, log: [...s.log, `You kneel to offer, but the ember takes nothing today. (${s.hoursRemaining - hourCost}h left)`] } as GameState;
+      }
+      if (!s.inventory.artifactsByType || (s.inventory.artifactsByType[type] || 0) <= 0) {
+        return { ...s, log: [...s.log, `You have no ${type} to offer.`] } as GameState;
+      }
+      const next = { ...s } as GameState;
+      next.hoursRemaining = s.hoursRemaining - hourCost;
+      next.storySerial = s.storySerial + 1;
+      const res = internalOfferArtifact(next, s, type);
+      next.inventory = res.inventory;
+      next.fire = res.fire;
+      next.rest = res.rest;
+      next.storyCooldowns = res.storyCooldowns;
+      next.voiceLevel = res.voiceLevel;
+      setVoiceLevel(res.voiceLevel || 0);
+      next.log = [...next.log, ...res.logs];
       return next;
     });
   }
@@ -415,14 +581,24 @@ export function useGame() {
       if (typeof d.hunger === "number") next.hunger = clamp(next.hunger + d.hunger);
       if (typeof d.rest === "number") next.rest = clamp(next.rest + d.rest);
       if (typeof d.wood === "number") next.wood = Math.max(0, next.wood + d.wood);
-          if (d.inventory) {
-        next.inventory = {
+      if (d.inventory) {
+        let inv = {
           ...next.inventory,
           wood: Math.max(0, next.inventory.wood + (d.inventory.wood || 0)),
-                meat: Math.max(0, next.inventory.meat + (d.inventory.meat || 0)),
+          meat: Math.max(0, next.inventory.meat + (d.inventory.meat || 0)),
           berries: Math.max(0, next.inventory.berries + (d.inventory.berries || 0)),
-          artifacts: Math.max(0, next.inventory.artifacts + (d.inventory.artifacts || 0)),
-        };
+          artifactsByType: next.inventory.artifactsByType || { idol: 0, shard: 0, heart: 0, feather: 0 },
+        } as Inventory;
+        const addArtifacts = d.inventory.artifacts || 0;
+        if (addArtifacts > 0) {
+          for (let i = 0; i < addArtifacts; i++) {
+            const r = engine.rng.next();
+            const pick = r < 0.25 ? "idol" : r < 0.5 ? "shard" : r < 0.75 ? "heart" : "feather";
+            inv.artifactsByType = { ...inv.artifactsByType!, [pick]: (inv.artifactsByType?.[pick] || 0) + 1 } as NonNullable<Inventory["artifactsByType"]>;
+          }
+          inv = syncArtifactTotal(inv);
+        }
+        next.inventory = inv;
       }
       // flags/cooldowns from option
       next.storyFlags = { ...next.storyFlags, ...(res.flags || {}) };
@@ -443,7 +619,10 @@ export function useGame() {
       wood: 3,
       daysSurvived: 0,
       hoursRemaining: 24,
-      log: ["A new run begins. Keep the ember alive."],
+      log: [
+        "You wake again beside the ember. Different hands. Same cold.",
+        "The ember remembers what you do not. Keep it alive."
+      ],
       isRunning: true,
       xp: 0,
       skills: s.skills,
@@ -452,7 +631,9 @@ export function useGame() {
         meat: 0,
         berries: 0,
         artifacts: 0,
+        artifactsByType: { idol: 0, shard: 0, heart: 0, feather: 0 },
       },
+      voiceLevel: s.voiceLevel,
       storySeed: Math.floor(Math.random() * 0xffffffff) >>> 0,
       storySerial: 0,
       storyFlags: {},
@@ -507,5 +688,5 @@ export function useGame() {
     });
   }
 
-  return { state, performAction, endDay, unlockSkill, resetRun, eatFood, respondToPrompt } as const;
+  return { state, performAction, endDay, unlockSkill, resetRun, eatFood, respondToPrompt, offerArtifact } as const;
 }

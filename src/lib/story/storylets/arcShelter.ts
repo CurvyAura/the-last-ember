@@ -54,7 +54,7 @@ export const ARC_SHELTER: Storylet[] = [
     },
     effect: (s, ctx, rng) => {
       void s; void ctx;
-      const gotArtifact = rng.int(1, 5) === 1; // 20%
+  const gotArtifact = rng.int(1, 3) === 1; // ~33%
       const logs = gotArtifact
         ? [
             "Half-collapsed lean-to under a black spruce. You salvage a small token from the wreck. (+1 artifact)",
