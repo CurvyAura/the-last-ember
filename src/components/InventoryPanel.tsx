@@ -13,8 +13,8 @@ export default function InventoryPanel({ inventory }: { inventory: Inventory }) 
           <span className="font-medium">{inventory.wood}</span>
         </li>
         <li className="flex justify-between text-sm">
-          <span>🥩 Food</span>
-          <span className="font-medium">{inventory.food}</span>
+          <span>🥩 Meat</span>
+          <span className="font-medium">{inventory.meat}</span>
         </li>
         <li className="flex justify-between text-sm">
           <span>🫐 Berries</span>

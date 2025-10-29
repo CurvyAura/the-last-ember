@@ -13,7 +13,7 @@ export type StoryDelta = {
   wood?: number; // legacy stat used in UI; may stay synced with inventory wood
   inventory?: Partial<{
     wood: number;
-    food: number;
+    meat: number;
     berries: number;
     artifacts: number;
   }>;
@@ -36,7 +36,7 @@ export type GameView = {
   daysSurvived: number;
   hoursRemaining: number;
   skills: { fireMastery: boolean; hunting: boolean; exploration: boolean };
-  inventory: { wood: number; food: number; berries: number; artifacts: number };
+  inventory: { wood: number; meat: number; berries: number; artifacts: number };
   storyFlags: Record<string, boolean | number>;
   storyCooldowns: Record<string, number>; // storylet id -> next allowed day
 };

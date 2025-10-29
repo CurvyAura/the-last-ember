@@ -12,7 +12,7 @@ export type Skills = {
 
 export type Inventory = {
   wood: number;
-  food: number;
+  meat: number;
   berries: number;
   artifacts: number;
 };
@@ -102,7 +102,7 @@ export function useGame() {
     skills,
     inventory: {
       wood: 0,
-      food: 0,
+      meat: 0,
       berries: 0,
       artifacts: 0,
     },
@@ -118,6 +118,31 @@ export function useGame() {
     // persist skills only
     saveSkills(skills);
   }, [skills]);
+
+  // Mid-run sync: listen for changes to skills in localStorage from other tabs/windows
+  useEffect(() => {
+    function handleStorage(e: StorageEvent) {
+      if (e.key === STORAGE_KEY) {
+        try {
+          const parsed = e.newValue ? JSON.parse(e.newValue) : null;
+          const nextSkills: Skills = parsed
+            ? {
+                fireMastery: !!parsed.fireMastery,
+                hunting: !!parsed.hunting,
+                exploration: !!parsed.exploration,
+              }
+            : { fireMastery: false, hunting: false, exploration: false };
+          setSkills(nextSkills);
+          setState((s) => ({ ...s, skills: nextSkills }));
+        } catch {
+          // ignore parse errors
+        }
+      }
+    }
+
+    window.addEventListener("storage", handleStorage);
+    return () => window.removeEventListener("storage", handleStorage);
+  }, []);
 
   // local helpers kept inline in main logic
 
@@ -145,8 +170,8 @@ export function useGame() {
         const chance = 0.7 + (s.skills.hunting ? 0.15 : 0);
         if (Math.random() < chance) {
           const meat = s.skills.hunting ? 2 : 1;
-          next.inventory = { ...next.inventory, food: next.inventory.food + meat };
-          next.log = [...next.log, `You hunt for ${hourCost} hours and catch prey. (+${meat} food to inventory, ${next.hoursRemaining}h left)`];
+          next.inventory = { ...next.inventory, meat: next.inventory.meat + meat };
+          next.log = [...next.log, `You hunt for ${hourCost} hours and catch prey. (+${meat} meat to inventory, ${next.hoursRemaining}h left)`];
         } else {
           next.log = [...next.log, `You hunt for ${hourCost} hours but find nothing. (${next.hoursRemaining}h left)`];
         }
@@ -157,8 +182,8 @@ export function useGame() {
         let consumed = "";
         
         // Prioritize meat over berries for now (can enhance later with choice)
-        if (next.inventory.food > 0) {
-          next.inventory = { ...next.inventory, food: next.inventory.food - 1 };
+        if (next.inventory.meat > 0) {
+          next.inventory = { ...next.inventory, meat: next.inventory.meat - 1 };
           hungerGained = 3;
           consumed = "meat";
         } else if (next.inventory.berries > 0) {
@@ -251,7 +276,7 @@ export function useGame() {
               next.inventory = {
                 ...next.inventory,
                 wood: Math.max(0, next.inventory.wood + (d.inventory.wood || 0)),
-                food: Math.max(0, next.inventory.food + (d.inventory.food || 0)),
+                meat: Math.max(0, next.inventory.meat + (d.inventory.meat || 0)),
                 berries: Math.max(0, next.inventory.berries + (d.inventory.berries || 0)),
                 artifacts: Math.max(0, next.inventory.artifacts + (d.inventory.artifacts || 0)),
               };
@@ -323,7 +348,7 @@ export function useGame() {
   }
 
   // Consume food from inventory. foodType should be either 'food' (meat) or 'berries'.
-  function eatFood(foodType: "food" | "berries", quantity: number) {
+  function eatFood(foodType: "meat" | "berries", quantity: number) {
     setState((s) => {
       if (!s.isRunning) return s;
 
@@ -333,17 +358,21 @@ export function useGame() {
         return { ...s, log: [...s.log, `Not enough hours remaining to eat ${quantity} ${foodType} (${totalHours}h needed, ${s.hoursRemaining}h left)`] } as GameState;
       }
 
-      const available = s.inventory[foodType] || 0;
+      const available = foodType === "meat" ? s.inventory.meat : s.inventory.berries;
       const use = Math.max(0, Math.min(available, quantity));
       if (use <= 0) {
         return { ...s, log: [...s.log, `You try to eat ${foodType} but have none.`] } as GameState;
       }
 
-      const hungerPerItem = foodType === "food" ? 3 : 2;
+      const hungerPerItem = foodType === "meat" ? 3 : 2;
       const totalHunger = hungerPerItem * use;
 
       const next = { ...s } as GameState;
-      next.inventory = { ...next.inventory, [foodType]: next.inventory[foodType] - use } as Inventory;
+      if (foodType === "meat") {
+        next.inventory = { ...next.inventory, meat: next.inventory.meat - use } as Inventory;
+      } else {
+        next.inventory = { ...next.inventory, berries: next.inventory.berries - use } as Inventory;
+      }
       next.hunger = clamp(next.hunger + totalHunger);
       next.hoursRemaining = next.hoursRemaining - totalHours;
       next.log = [...next.log, `You eat ${use} ${foodType} for ${totalHours} hour${totalHours > 1 ? "s" : ""}. (+${totalHunger} hunger, ${next.hoursRemaining}h left)`];
@@ -386,11 +415,11 @@ export function useGame() {
       if (typeof d.hunger === "number") next.hunger = clamp(next.hunger + d.hunger);
       if (typeof d.rest === "number") next.rest = clamp(next.rest + d.rest);
       if (typeof d.wood === "number") next.wood = Math.max(0, next.wood + d.wood);
-      if (d.inventory) {
+          if (d.inventory) {
         next.inventory = {
           ...next.inventory,
           wood: Math.max(0, next.inventory.wood + (d.inventory.wood || 0)),
-          food: Math.max(0, next.inventory.food + (d.inventory.food || 0)),
+                meat: Math.max(0, next.inventory.meat + (d.inventory.meat || 0)),
           berries: Math.max(0, next.inventory.berries + (d.inventory.berries || 0)),
           artifacts: Math.max(0, next.inventory.artifacts + (d.inventory.artifacts || 0)),
         };
@@ -420,7 +449,7 @@ export function useGame() {
       skills: s.skills,
       inventory: {
         wood: 0,
-        food: 0,
+        meat: 0,
         berries: 0,
         artifacts: 0,
       },
@@ -450,7 +479,12 @@ export function useGame() {
       // Reset hours for new day
       next.hoursRemaining = 24;
       next.daysSurvived = next.daysSurvived + 1;
-      next.log = [...next.log, `Day ${next.daysSurvived} begins. You have 24 hours.`];
+      const decayParts = ["-2 hunger", "-1 rest"]; if (decay > 0) decayParts.push("-1 fire");
+      next.log = [
+        ...next.log,
+        `Night passes. (${decayParts.join(", ")})`,
+        `Day ${next.daysSurvived} begins. You have 24 hours.`,
+      ];
 
       // Check end conditions
       if (next.fire <= 0) {

@@ -14,21 +14,21 @@ export default function FoodSelectionModal({
   onClose: () => void;
   inventory: Inventory;
   hoursRemaining: number;
-  onConfirm: (foodType: "food" | "berries", qty: number) => void;
+  onConfirm: (foodType: "meat" | "berries", qty: number) => void;
 }) {
-  const availableFood = inventory.food || 0;
+  const availableMeat = inventory.meat || 0;
   const availableBerries = inventory.berries || 0;
 
   // Initialize defaults once per mount; parent supplies a changing key to reset between opens
-  const [selected, setSelected] = useState<"food" | "berries">(() => (availableFood > 0 ? "food" : availableBerries > 0 ? "berries" : "food"));
-  const [qty, setQty] = useState<number>(() => (availableFood > 0 || availableBerries > 0 ? 1 : 0));
+  const [selected, setSelected] = useState<"meat" | "berries">(() => (availableMeat > 0 ? "meat" : availableBerries > 0 ? "berries" : "meat"));
+  const [qty, setQty] = useState<number>(() => (availableMeat > 0 || availableBerries > 0 ? 1 : 0));
 
   if (!open) return null;
 
   const perItemHours = 1; // each eating action costs 1 hour per item
   const maxByHours = Math.max(0, Math.floor(hoursRemaining / perItemHours));
 
-  const availableForSelected = selected === "food" ? availableFood : availableBerries;
+  const availableForSelected = selected === "meat" ? availableMeat : availableBerries;
   const maxQty = Math.max(0, Math.min(availableForSelected, maxByHours));
   const clampedQty = Math.max(0, Math.min(qty, maxQty));
 
@@ -52,14 +52,14 @@ export default function FoodSelectionModal({
               <input
                 type="radio"
                 name="food-type"
-                value="food"
-                checked={selected === "food"}
-                onChange={() => setSelected("food")}
-                disabled={availableFood <= 0}
+                value="meat"
+                checked={selected === "meat"}
+                onChange={() => setSelected("meat")}
+                disabled={availableMeat <= 0}
               />
               <span className="font-medium">Meat</span>
             </label>
-            <span className="text-sm text-zinc-500">({availableFood} available)</span>
+            <span className="text-sm text-zinc-500">({availableMeat} available)</span>
           </div>
 
           <div className="flex items-center gap-3">
@@ -116,7 +116,7 @@ export default function FoodSelectionModal({
           <div className="text-sm">
             {clampedQty > 0 ? (
               <div>
-                Eating {clampedQty} {selected} will restore {selected === "food" ? 3 * clampedQty : 2 * clampedQty} hunger and cost {perItemHours * clampedQty} hour{perItemHours * clampedQty > 1 ? "s" : ""}.
+                Eating {clampedQty} {selected} will restore {selected === "meat" ? 3 * clampedQty : 2 * clampedQty} hunger and cost {perItemHours * clampedQty} hour{perItemHours * clampedQty > 1 ? "s" : ""}.
               </div>
             ) : (
               <div className="text-zinc-500">Select an amount to eat.</div>

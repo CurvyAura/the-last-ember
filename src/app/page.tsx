@@ -24,7 +24,7 @@ export default function Home() {
       <main id="main-content" className="mx-auto max-w-3xl space-y-6">
         <header className="flex items-center justify-between">
           <h1 className="text-2xl font-semibold">The Last Ember</h1>
-          <a className="text-sm underline" href="/knowledge">
+          <a className="text-sm underline" href="/knowledge" target="_blank" rel="noopener noreferrer">
             Knowledge Tree
           </a>
         </header>
@@ -41,7 +41,7 @@ export default function Home() {
               onAction={(a: ActionType) => {
                 if (a === "eat") {
                   const inv = game.state.inventory;
-                  if ((inv.food || 0) > 0 || (inv.berries || 0) > 0) {
+                  if ((inv.meat || 0) > 0 || (inv.berries || 0) > 0) {
                     setModalKey((k) => k + 1);
                     setShowFoodModal(true);
                   } else {
@@ -53,7 +53,7 @@ export default function Home() {
               }}
               disabled={!game.state.isRunning || !!game.state.currentPrompt}
               hoursRemaining={game.state.hoursRemaining}
-              canEat={(game.state.inventory.food || 0) > 0 || (game.state.inventory.berries || 0) > 0}
+              canEat={(game.state.inventory.meat || 0) > 0 || (game.state.inventory.berries || 0) > 0}
               canOffer={(game.state.inventory.artifacts || 0) > 0 && (game.state.storyCooldowns["ability:offer-ember"] ?? -1) <= game.state.daysSurvived}
             />
 

@@ -18,8 +18,8 @@ export default function StatsPanel({ state }: { state: GameState }) {
         </div>
 
         <div className="flex gap-3 text-sm text-zinc-600 dark:text-zinc-300">
-          <div>Days survived: <span className="font-medium ml-1">{state.daysSurvived}</span></div>
-          <div>Hours left: <span className="font-medium ml-1">{state.hoursRemaining}</span></div>
+          {/* <div>Days survived: <span className="font-medium ml-1">{state.daysSurvived}</span></div>
+          <div>Hours left: <span className="font-medium ml-1">{state.hoursRemaining}</span></div> */}
         </div>
       </div>
     </section>

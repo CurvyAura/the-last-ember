@@ -32,9 +32,9 @@ export const VIGNETTES: Storylet[] = [
       const caught = rng.int(1, 4) === 1; // 25% chance
       return {
         logs: caught
-          ? ["A hare bolts from cover. You get lucky with a thrown stone. (+1 food)"]
+          ? ["A hare bolts from cover. You get lucky with a thrown stone. (+1 meat)"]
           : ["A hare bolts from cover. Too quick to catch."],
-        delta: caught ? { inventory: { food: 1 } } : undefined,
+        delta: caught ? { inventory: { meat: 1 } } : undefined,
       };
     },
   },
@@ -108,9 +108,9 @@ export const VIGNETTES: Storylet[] = [
       const full = rng.int(1, 3) === 1; // ~33%
       return {
         logs: full
-          ? ["A rusted snare someone left. A small catch hangs stiff. (+1 food)"]
+          ? ["A rusted snare someone left. A small catch hangs stiff. (+1 meat)"]
           : ["A rusted snare someone left. Empty now."],
-        delta: full ? { inventory: { food: 1 } } : undefined,
+        delta: full ? { inventory: { meat: 1 } } : undefined,
       };
     },
   },
@@ -337,8 +337,8 @@ export const VIGNETTES: Storylet[] = [
       void s; void ctx;
       const get = rng.int(1, 3) === 1;
       return {
-        logs: [get ? "A fish is trapped in a shrinking pool between stones. You take it. (+1 food)" : "A shrinking pool swirls with darting shadows—too quick."],
-        delta: get ? { inventory: { food: 1 } } : undefined,
+        logs: [get ? "A fish is trapped in a shrinking pool between stones. You take it. (+1 meat)" : "A shrinking pool swirls with darting shadows—too quick."],
+        delta: get ? { inventory: { meat: 1 } } : undefined,
       };
     },
   },
@@ -471,7 +471,7 @@ export const VIGNETTES: Storylet[] = [
     effect: (s, ctx, rng) => {
       void s; void ctx;
       const chance = rng.int(1, 5) === 1;
-      return { logs: [chance ? "Ptarmigan burst from underfoot; one doesn’t fly far. (+1 food)" : "Ptarmigan burst from underfoot in a flurry of snow."], delta: chance ? { inventory: { food: 1 } } : undefined };
+  return { logs: [chance ? "Ptarmigan burst from underfoot; one doesn’t fly far. (+1 meat)" : "Ptarmigan burst from underfoot in a flurry of snow."], delta: chance ? { inventory: { meat: 1 } } : undefined };
     },
   },
   {
