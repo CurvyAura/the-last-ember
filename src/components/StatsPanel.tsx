@@ -8,19 +8,18 @@ export default function StatsPanel({ state }: { state: GameState }) {
     <section aria-label="Player stats" className="rounded border border-zinc-200 bg-white p-4 dark:border-zinc-700 dark:bg-zinc-900">
       <h3 className="mb-3 text-sm font-semibold">Stats</h3>
       <div className="space-y-3">
-        {/* Health is a derived stat: average of fire, hunger, rest (0-10) */}
-        <BarStat label="Health" value={Math.round((state.fire + state.hunger + state.rest) / 3)} emoji="❤️" />
+        {/* Health is a derived stat: average of warmth, hunger, thirst, and rest (0-10). */}
+        <BarStat label="Health" value={Math.round((state.fire + state.hunger + state.thirst + state.rest) / 4)} emoji="❤️" />
 
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-          <BarStat label="Fire" value={state.fire} emoji="🔥" />
+          {/* Warmth shows 10/10 when any active fire is present in the environment */}
+          <BarStat label="Warmth" value={state.fire > 0 ? 10 : 0} emoji="🔥" />
           <BarStat label="Hunger" value={state.hunger} emoji="🍖" />
+          <BarStat label="Thirst" value={state.thirst} emoji="💧" />
           <BarStat label="Rest" value={state.rest} emoji="💤" />
         </div>
 
-        <div className="flex gap-3 text-sm text-zinc-600 dark:text-zinc-300">
-          {/* <div>Days survived: <span className="font-medium ml-1">{state.daysSurvived}</span></div>
-          <div>Hours left: <span className="font-medium ml-1">{state.hoursRemaining}</span></div> */}
-        </div>
+        {/* Season and weather moved to Environment panel for clarity. */}
       </div>
     </section>
   );

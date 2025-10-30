@@ -116,7 +116,15 @@ export default function FoodSelectionModal({
           <div className="text-sm">
             {clampedQty > 0 ? (
               <div>
-                Eating {clampedQty} {selected} will restore {selected === "meat" ? 3 * clampedQty : 2 * clampedQty} hunger and cost {perItemHours * clampedQty} hour{perItemHours * clampedQty > 1 ? "s" : ""}.
+                {(() => {
+                  const hungerRestore = selected === "meat" ? 3 * clampedQty : 1 * clampedQty;
+                  const thirstRestore = selected === "berries" ? 1 * clampedQty : 0;
+                  return (
+                    <span>
+                      Eating {clampedQty} {selected} will restore {hungerRestore} hunger{thirstRestore > 0 ? ` and ${thirstRestore} thirst` : ""} and cost {perItemHours * clampedQty} hour{perItemHours * clampedQty > 1 ? "s" : ""}.
+                    </span>
+                  );
+                })()}
               </div>
             ) : (
               <div className="text-zinc-500">Select an amount to eat.</div>

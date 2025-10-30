@@ -5,18 +5,18 @@ import { useGame } from "../hooks/useGame";
 import StatsPanel from "@/components/StatsPanel";
 import LogPanel from "@/components/LogPanel";
 import ActionButtons from "@/components/ActionButtons";
+import EnvironmentPanel from "@/components/EnvironmentPanel";
 import type { ActionType } from "@/components/ActionButtons";
 import PostRunModal from "@/components/PostRunModal";
 import InventoryPanel from "@/components/InventoryPanel";
 import FoodSelectionModal from "@/components/FoodSelectionModal";
 import ChoiceModal from "@/components/ChoiceModal";
-import OfferSelectionModal from "@/components/OfferSelectionModal";
+// Offer mechanic hidden in survival pivot
 
 export default function Home() {
   const game = useGame();
   const [showFoodModal, setShowFoodModal] = useState(false);
   const [modalKey, setModalKey] = useState(0);
-  const [showOfferModal, setShowOfferModal] = useState(false);
 
   return (
     <div className="min-h-screen bg-zinc-50 dark:bg-black font-sans p-4">
@@ -24,8 +24,11 @@ export default function Home() {
         Skip to main content
       </a>
       <main id="main-content" className="mx-auto max-w-3xl space-y-6">
-        <header className="flex items-center justify-between">
-          <h1 className="text-2xl font-semibold">The Last Ember</h1>
+          <header className="flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-semibold">The Last Ember</h1>
+            {/* <p className="text-xs text-zinc-600 dark:text-zinc-400">Quick tips: gather wood, tend the fire, eat to recover, and rest to regain strength.</p> */}
+          </div>
           <a className="text-sm underline" href="/knowledge">
             Knowledge Tree
           </a>
@@ -49,22 +52,16 @@ export default function Home() {
                   } else {
                     game.performAction(a);
                   }
-                } else if (a === "offer") {
-                  const types = game.state.inventory.artifactsByType || { idol: 0, shard: 0, heart: 0, feather: 0 };
-                  const total = (types.idol || 0) + (types.shard || 0) + (types.heart || 0) + (types.feather || 0);
-                  if (total > 0) {
-                    setShowOfferModal(true);
-                  } else {
-                    game.performAction(a);
-                  }
                 } else {
+                  // offer/action meta removed from main loop; other actions pass through
                   game.performAction(a);
                 }
               }}
               disabled={!game.state.isRunning || !!game.state.currentPrompt}
               hoursRemaining={game.state.hoursRemaining}
               canEat={(game.state.inventory.meat || 0) > 0 || (game.state.inventory.berries || 0) > 0}
-              canOffer={(() => { const t = game.state.inventory.artifactsByType || { idol: 0, shard: 0, heart: 0, feather: 0 }; const total = (t.idol||0)+(t.shard||0)+(t.heart||0)+(t.feather||0); return total > 0 && (game.state.storyCooldowns["ability:offer-ember"] ?? -1) <= game.state.daysSurvived; })()}
+              canDrink={game.state.thirst < 10}
+              canOffer={false}
             />
 
             <div className="mt-4">
@@ -79,16 +76,22 @@ export default function Home() {
             </div>
           </div>
 
-          <div>
-            <StatsPanel state={game.state} />
-          </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div>
+              <StatsPanel state={game.state} />
+            </div>
 
-          <div>
-            <InventoryPanel inventory={game.state.inventory} />
+            <div>
+              <EnvironmentPanel state={game.state} />
+            </div>
+
+            <div className="sm:col-span-2">
+              <InventoryPanel inventory={game.state.inventory} carryCapacity={game.state.carryCapacity} />
+            </div>
           </div>
         </section>
 
-        <PostRunModal open={!game.state.isRunning && game.state.xp > 0} xp={game.state.xp} onSpend={game.unlockSkill} onReset={() => game.resetRun()} unlocked={game.state.skills} />
+  <PostRunModal open={!game.state.isRunning} onReset={() => game.resetRun()} recentLog={game.state.log.slice(-3)} daysSurvived={game.state.daysSurvived} />
         <FoodSelectionModal
           key={modalKey}
           open={showFoodModal}
@@ -118,17 +121,7 @@ export default function Home() {
           }}
         />
 
-        <OfferSelectionModal
-          open={showOfferModal}
-          onClose={() => setShowOfferModal(false)}
-          inventory={game.state.inventory}
-          onConfirm={(type) => {
-            // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-            // @ts-ignore
-            game.offerArtifact(type);
-            setShowOfferModal(false);
-          }}
-        />
+        {/* Offer UI removed in survival pivot */}
       </main>
     </div>
   );

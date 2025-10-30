@@ -1,10 +1,9 @@
 "use client";
 
 import React from "react";
-import type { Skills } from "../hooks/useGame";
+// no types imported (keep component props minimal)
 
-export default function PostRunModal({ open, xp, onSpend, onReset, unlocked, }: { open: boolean; xp: number; onSpend: (skill: keyof Skills) => void; onReset: () => void; unlocked: Skills; }) {
-  const cost = 3;
+export default function PostRunModal({ open, onReset, recentLog = [], daysSurvived = 0, }: { open: boolean; onReset: () => void; recentLog?: string[]; daysSurvived?: number; }) {
   const modalRef = React.useRef<HTMLDivElement | null>(null);
 
   React.useEffect(() => {
@@ -15,7 +14,6 @@ export default function PostRunModal({ open, xp, onSpend, onReset, unlocked, }: 
     }
     if (open) {
       document.addEventListener("keydown", onKey);
-      // focus first focusable inside modal
       const el = modalRef.current?.querySelector<HTMLElement>("button:not(:disabled)");
       el?.focus();
     }
@@ -24,48 +22,51 @@ export default function PostRunModal({ open, xp, onSpend, onReset, unlocked, }: 
 
   if (!open) return null;
 
+  const title = "Run Summary";
+
+  // Decide button text by run stage. Keep pragmatic labels for the survival pivot.
+  const stage = daysSurvived <= 2 ? "early" : daysSurvived <= 7 ? "mid" : "late";
+  const buttonText = stage === "early" ? "Try again" : stage === "mid" ? "Restart" : "Start new run";
+
+  const flavor = (
+    <>
+      <p className="mb-2">Run complete — summary and tips below.</p>
+      <div className="text-xs text-zinc-500">
+        <div>Days survived: <span className="font-medium">{daysSurvived}</span></div>
+        <div className="mt-2">Tips: Gather wood, tend your fire, eat when hungry, and rest to recover.</div>
+      </div>
+    </>
+  );
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" role="dialog" aria-modal="true" aria-label="Run complete">
       <div ref={modalRef} className="w-full max-w-md rounded bg-white p-6 dark:bg-zinc-900">
-        <h2 className="mb-2 text-lg font-semibold">Run complete</h2>
-        <p className="mb-4 text-sm text-zinc-600 dark:text-zinc-300">You earned <strong>{xp}</strong> XP from this run.</p>
+        <h2 className="mb-2 text-lg font-semibold">{title}</h2>
 
-        <div className="space-y-3">
-          <SkillRow name="Fire Mastery" unlocked={unlocked.fireMastery} xp={xp} cost={cost} onSpend={() => onSpend("fireMastery")} />
-          <SkillRow name="Hunting" unlocked={unlocked.hunting} xp={xp} cost={cost} onSpend={() => onSpend("hunting")} />
-          <SkillRow name="Exploration" unlocked={unlocked.exploration} xp={xp} cost={cost} onSpend={() => onSpend("exploration")} />
+        <div className="mb-3 text-sm text-zinc-600 dark:text-zinc-300">
+          {flavor}
         </div>
 
-        <div className="mt-6 flex items-center justify-between">
+        {recentLog.length > 0 && (
+          <div className="mb-3 rounded border border-zinc-100 bg-zinc-50 p-3 text-sm dark:border-zinc-700 dark:bg-zinc-800">
+            <div className="font-medium mb-1">Last moments</div>
+            <div className="text-xs text-zinc-600 dark:text-zinc-300">
+              {recentLog.map((l, i) => (
+                <div key={i} className="whitespace-pre-wrap">{l}</div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div className="mt-6 flex items-center justify-end">
           <button
             className="rounded bg-indigo-600 px-4 py-2 text-sm font-medium text-white focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-400 disabled:opacity-50"
             onClick={onReset}
             aria-label="Start a new run"
           >
-            Start New Run
+            {buttonText}
           </button>
-          <span className="text-sm text-zinc-600 dark:text-zinc-400">XP left: {xp}</span>
         </div>
-      </div>
-    </div>
-  );
-}
-
-function SkillRow({ name, unlocked, xp, cost, onSpend }: { name: string; unlocked: boolean; xp: number; cost: number; onSpend: () => void }) {
-  return (
-    <div className="flex items-center justify-between rounded border border-zinc-100 p-2 dark:border-zinc-700">
-      <div>
-        <div className="font-medium">{name}</div>
-        <div className="text-xs text-zinc-500">{unlocked ? "Unlocked" : `Cost ${cost} XP`}</div>
-      </div>
-      <div>
-        <button
-          className="rounded bg-indigo-600 px-3 py-1 text-sm text-white disabled:opacity-50"
-          onClick={onSpend}
-          disabled={unlocked || xp < cost}
-        >
-          Unlock
-        </button>
       </div>
     </div>
   );

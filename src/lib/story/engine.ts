@@ -6,9 +6,10 @@ import { STORYLETS } from "./storylets/index";
 
 export type EngineOptions = {
   risk: RiskLevel;
+  survival?: boolean;
 };
 
-const DEFAULT_OPTS: EngineOptions = { risk: "moderate" };
+const DEFAULT_OPTS: EngineOptions = { risk: "moderate", survival: false };
 
 export function makeEngine(seed: number, opts: Partial<EngineOptions> = {}) {
   const options: EngineOptions = { ...DEFAULT_OPTS, ...opts } as EngineOptions;
@@ -56,7 +57,15 @@ export function makeEngine(seed: number, opts: Partial<EngineOptions> = {}) {
   }
 
   function generateStoryBeat(s: GameView, ctx: ActionContext): StoryResult | null {
-    const pool: Storylet[] = STORYLETS.filter((sl: Storylet) => eligible(s, ctx, sl));
+    let pool: Storylet[] = STORYLETS.filter((sl: Storylet) => eligible(s, ctx, sl));
+    // If running in 'survival' mode, filter out lore/signs-focused storylets to keep beats tactical and resource-focused
+    if (options.survival) {
+      pool = pool.filter((sl) => {
+        const tags = sl.tags || [];
+        if (tags.includes("lore") || tags.includes("signs")) return false;
+        return true;
+      });
+    }
     if (pool.length === 0) return null;
     const chosen = pickWeighted(pool, (sl: Storylet) => weightOf(s, ctx, sl));
     if (!chosen) return null;

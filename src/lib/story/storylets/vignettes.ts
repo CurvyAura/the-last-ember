@@ -355,13 +355,18 @@ export const VIGNETTES: Storylet[] = [
   },
   {
     id: "ash:soot-fall",
-    tags: ["hazard", "weather"],
+    tags: ["find", "forage"],
     cooldownDays: 3,
     weight: 0.8,
     when: (_s, ctx) => ctx.action === "explore",
     effect: (s, ctx, _rng) => {
       void s; void ctx; void _rng;
-      return { logs: ["A soft fall of soot drifts from a stand of trees. It coats your tongue. (-1 rest)"], delta: { rest: -1 } };
+      return {
+        logs: [
+          "You pry apart a rotten log and find a cluster of parched roots — bitter but filling. (+1 berries)",
+        ],
+        delta: { inventory: { berries: 1 } },
+      };
     },
   },
   {

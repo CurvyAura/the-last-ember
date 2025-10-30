@@ -23,6 +23,21 @@ export type Inventory = {
   };
 };
 
+// Per-item weight definitions (units are abstract "weight" units). These
+// are used to compute carried load vs capacity. We keep the existing flat
+// counts in `Inventory` to avoid large downstream edits; the game will
+// enforce pickups based on weight/capacity.
+const ITEM_WEIGHTS: Record<string, number> = {
+  wood: 1, // firewood is bulky
+  meat: 2, // raw meat is heavier
+  berries: 0.5, // light
+  artifacts: 3, // generic fallback
+  idol: 5,
+  shard: 3,
+  heart: 4,
+  feather: 1,
+};
+
 export type GameState = {
   fire: number;
   hunger: number;
@@ -36,12 +51,19 @@ export type GameState = {
   skills: Skills;
   inventory: Inventory;
   voiceLevel?: number;
+  weather?: { type: "clear" | "rain" | "snow" | "cold-snap"; temp: number };
+  season?: "spring" | "summer" | "autumn" | "winter";
+  // Carrying capacity for inventory (weight units). Can be increased later
+  // by crafting a bag / carrying device.
+  carryCapacity: number;
+  thirst: number;
   // procedural story state
   storySeed: number;
   storySerial: number; // increments each action for deterministic variety
   storyFlags: Record<string, boolean | number>;
   storyCooldowns: Record<string, number>;
-  recentActions: Array<"gather" | "hunt" | "rest" | "explore" | "tend" | "eat" | "offer">;
+  recentActions: Array<"gather" | "hunt" | "rest" | "explore" | "tend" | "eat" | "drink" | "offer">;
+  
   currentPrompt: null | {
     id: string;
     title?: string;
@@ -49,11 +71,18 @@ export type GameState = {
     options: Array<{ label: string; description?: string; _key: string }>;
     _effects: Record<string, (s: GameView, ctx: { action: "explore"; day: number; hoursRemaining: number }, rng: RNG) => Pick<StoryResult, "logs" | "delta" | "flags" | "cooldownDays">>;
   };
+  artifactLevels?: {
+    idol: number;
+    shard: number;
+    heart: number;
+    feather: number;
+  };
 };
 
 const STORAGE_KEY = "tle-knowledge";
 const VOICE_KEY = "tle-voice";
 const RUN_KEY = "tle-run";
+const ARTIFACT_LEVELS_KEY = "tle-artifact-levels";
 
 function clamp(v: number, a = 0, b = 10) {
   return Math.max(a, Math.min(b, v));
@@ -107,6 +136,7 @@ function saveRunSnapshot(s: GameState) {
     const toSave: Partial<GameState> = {
       fire: s.fire,
       hunger: s.hunger,
+      thirst: s.thirst,
       rest: s.rest,
       wood: s.wood,
       daysSurvived: s.daysSurvived,
@@ -116,7 +146,10 @@ function saveRunSnapshot(s: GameState) {
       xp: s.xp,
       skills: s.skills,
       inventory: s.inventory,
+      weather: s.weather,
+      season: s.season,
       voiceLevel: s.voiceLevel,
+      carryCapacity: s.carryCapacity,
       storySeed: s.storySeed,
       storySerial: s.storySerial,
       storyFlags: s.storyFlags,
@@ -143,6 +176,31 @@ function loadRunSnapshot(): Partial<GameState> | null {
   }
 }
 
+function loadArtifactLevels(): { idol: number; shard: number; heart: number; feather: number } | null {
+  try {
+    if (typeof window === "undefined") return null;
+    const raw = localStorage.getItem(ARTIFACT_LEVELS_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return {
+      idol: Math.max(0, Number(parsed.idol) || 0),
+      shard: Math.max(0, Number(parsed.shard) || 0),
+      heart: Math.max(0, Number(parsed.heart) || 0),
+      feather: Math.max(0, Number(parsed.feather) || 0),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function saveArtifactLevels(levels: { idol: number; shard: number; heart: number; feather: number }) {
+  try {
+    localStorage.setItem(ARTIFACT_LEVELS_KEY, JSON.stringify(levels));
+  } catch {
+    // ignore
+  }
+}
+
 // Story EVENTS replaced by local story engine
 
 const ACTION_HOURS: Record<string, number> = {
@@ -152,6 +210,7 @@ const ACTION_HOURS: Record<string, number> = {
   explore: 5,
   tend: 2,
   eat: 1,
+  drink: 1,
   offer: 1,
 };
 
@@ -161,15 +220,16 @@ export function useGame() {
   const [voiceLevel, setVoiceLevel] = useState<number>(() => loadVoiceLevel());
 
   const [state, setState] = useState<GameState>(() => ({
-    fire: 5,
+  fire: 0,
     hunger: 8,
     rest: 8,
     wood: 3,
     daysSurvived: 0,
     hoursRemaining: 24,
     log: [
-      "You awaken beside the faint glow of a dying ember — the last warmth in a ruined world.",
-      "The forest is silent. The air tastes of ash. Keep the ember alive.",
+      "You wake beside a small ember. Your objective: keep it burning.",
+      "Quick tips: gather wood, tend the fire, eat when hungry, and rest to recover.",
+      "Use the Stats panel to check weather and resources.",
     ],
     isRunning: true,
     xp: 0,
@@ -181,7 +241,12 @@ export function useGame() {
       artifacts: 0,
       artifactsByType: { idol: 0, shard: 0, heart: 0, feather: 0 },
     },
+    artifactLevels: { idol: 0, shard: 0, heart: 0, feather: 0 },
     voiceLevel: voiceLevel,
+    // default carrying capacity (weight units). Players can later craft items
+    // that increase this value.
+    carryCapacity: 12,
+    thirst: 8,
     storySeed: Math.floor(Math.random() * 0xffffffff) >>> 0,
     storySerial: 0,
     storyFlags: {},
@@ -194,6 +259,55 @@ export function useGame() {
     // persist skills only
     saveSkills(skills);
   }, [skills]);
+
+  // On first mount, assign an initial random season/weather so the player
+  // starts "lost in a random climate." We use the storySeed to derive a
+  // deterministic initial climate for each run.
+  useEffect(() => {
+    // Defer to next tick to avoid cascading renders during mount
+    setTimeout(() => {
+      setState((s) => {
+        // if already assigned (e.g., loaded from snapshot), keep it
+        if (s.season && s.weather) return s;
+        try {
+          const seed = s.storySeed || Math.floor(Math.random() * 0xffffffff) >>> 0;
+          const seasonNames: GameState["season"][] = ["spring", "summer", "autumn", "winter"];
+          const seasonIndex = seed % 4;
+          const season = seasonNames[seasonIndex];
+
+          const baseTemp = season === "spring" ? 8 : season === "summer" ? 12 : season === "autumn" ? 6 : 0;
+          const tempVariance = (seed % 7) - 3; // range -3..+3
+          const temp = baseTemp + tempVariance;
+
+          // simple weight by season
+          let pClear = 60;
+          const pRain = season === "spring" || season === "autumn" ? 25 : season === "summer" ? 15 : 10;
+          let pSnow = season === "winter" ? 15 : 0;
+          let pCold = 5;
+          if (temp <= 2) {
+            pSnow = Math.max(pSnow, 25);
+            pCold = Math.max(pCold, 10);
+            pClear = Math.max(10, pClear - 20);
+          }
+          const tot = pClear + pRain + pSnow + pCold;
+          const roll = (seed % tot) + 1;
+          let cursor = pClear;
+          let chosen: "clear" | "rain" | "snow" | "cold-snap" = "clear";
+          if (roll <= cursor) chosen = "clear";
+          else if (roll <= (cursor += pRain)) chosen = "rain";
+          else if (roll <= (cursor += pSnow)) chosen = "snow";
+          else chosen = "cold-snap";
+
+          const startLog = [`You wake lost in a ${season} climate — ${chosen}${typeof temp === "number" ? ` • ${temp}°` : ""}.`, "Objective: survive as long as possible.", "Quick tips: gather wood, tend the fire, eat to recover, and rest to regain strength."];
+
+          return { ...s, season, weather: { type: chosen, temp }, log: startLog } as GameState;
+        } catch {
+          return s;
+        }
+      });
+    }, 0);
+    // run once
+  }, []);
 
   useEffect(() => {
     saveVoiceLevel(voiceLevel);
@@ -239,6 +353,17 @@ export function useGame() {
     return () => clearTimeout(t);
   }, [state]);
 
+  // Persist artifact levels separately whenever they change
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const levels = state.artifactLevels;
+      if (levels) saveArtifactLevels(levels);
+    } catch {
+      // ignore
+    }
+  }, [state.artifactLevels]);
+
   // Load saved run on mount (client-only). We defer setState slightly to avoid hydration mismatch warnings.
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -251,6 +376,7 @@ export function useGame() {
           ...s,
           fire: typeof saved.fire === "number" ? saved.fire : s.fire,
           hunger: typeof saved.hunger === "number" ? saved.hunger : s.hunger,
+          thirst: typeof saved.thirst === "number" ? saved.thirst : s.thirst,
           rest: typeof saved.rest === "number" ? saved.rest : s.rest,
           wood: typeof saved.wood === "number" ? saved.wood : s.wood,
           daysSurvived: typeof saved.daysSurvived === "number" ? saved.daysSurvived : s.daysSurvived,
@@ -261,15 +387,24 @@ export function useGame() {
           skills: saved.skills || s.skills,
           inventory: saved.inventory || s.inventory,
           voiceLevel: typeof saved.voiceLevel === "number" ? saved.voiceLevel : s.voiceLevel,
+          weather: typeof saved.weather === "object" ? saved.weather : s.weather,
+          carryCapacity: typeof saved.carryCapacity === "number" ? saved.carryCapacity : s.carryCapacity,
+          season: typeof saved.season === "string" ? (saved.season as GameState["season"]) : s.season,
           storySeed: typeof saved.storySeed === "number" ? saved.storySeed : s.storySeed,
           storySerial: typeof saved.storySerial === "number" ? saved.storySerial : s.storySerial,
           storyFlags: saved.storyFlags || s.storyFlags,
           storyCooldowns: saved.storyCooldowns || s.storyCooldowns,
           recentActions: saved.recentActions || s.recentActions,
           currentPrompt: null,
+          artifactLevels: s.artifactLevels,
         }));
         if (saved.skills) setSkills(saved.skills as Skills);
         if (typeof saved.voiceLevel === "number") setVoiceLevel(saved.voiceLevel);
+        // Load persisted artifact levels separately and merge
+        const savedLevels = loadArtifactLevels();
+        if (savedLevels) {
+          setState((prev) => ({ ...prev, artifactLevels: savedLevels }));
+        }
       }, 0);
     } catch {
       // ignore
@@ -278,7 +413,7 @@ export function useGame() {
 
   // local helpers kept inline in main logic
 
-  function performAction(action: "gather" | "hunt" | "rest" | "explore" | "tend" | "eat" | "offer") {
+  function performAction(action: "gather" | "hunt" | "rest" | "explore" | "tend" | "eat" | "drink" | "offer") {
     setState((s) => {
       if (!s.isRunning) return s;
       
@@ -293,18 +428,38 @@ export function useGame() {
 
       if (action === "gather") {
         const gained = 2;
-        next.inventory = { ...next.inventory, wood: next.inventory.wood + gained };
-        next.wood = next.wood + gained; // Keep legacy wood stat for now
-        next.log = [...next.log, `You gather wood for ${hourCost} hours. (+${gained} wood to inventory, ${next.hoursRemaining}h left)`];
+        // Respect carrying capacity: compute available space in weight units
+        const currentLoad = getInventoryLoad(next.inventory);
+        const space = Math.max(0, (next.carryCapacity || 0) - currentLoad);
+        const maxPickup = Math.floor(space / ITEM_WEIGHTS.wood);
+        const pick = Math.max(0, Math.min(gained, maxPickup));
+        if (pick > 0) {
+          next.inventory = { ...next.inventory, wood: next.inventory.wood + pick };
+          next.wood = next.wood + pick; // Keep legacy wood stat for now
+          const left = gained - pick;
+          next.log = [...next.log, `You gather wood for ${hourCost} hours. (+${pick} wood to inventory, ${next.hoursRemaining}h left)`];
+          if (left > 0) next.log = [...next.log, `You couldn't carry ${left} wood and leave it behind.`];
+        } else {
+          next.log = [...next.log, `You find wood but cannot carry any more. (${next.hoursRemaining}h left)`];
+        }
       }
 
       if (action === "hunt") {
         const chance = 0.7 + (s.skills.hunting ? 0.15 : 0);
         if (Math.random() < chance) {
-          let meat = s.skills.hunting ? 2 : 1;
-          if ((s.voiceLevel || 0) >= 2) meat += 1;
-          next.inventory = { ...next.inventory, meat: next.inventory.meat + meat };
-          next.log = [...next.log, `You hunt for ${hourCost} hours and catch prey. (+${meat} meat to inventory, ${next.hoursRemaining}h left)`];
+          const meat = s.skills.hunting ? 2 : 1;
+          const currentLoad = getInventoryLoad(next.inventory);
+          const space = Math.max(0, (next.carryCapacity || 0) - currentLoad);
+          const maxPickup = Math.floor(space / ITEM_WEIGHTS.meat);
+          const pick = Math.max(0, Math.min(meat, maxPickup));
+          if (pick > 0) {
+            next.inventory = { ...next.inventory, meat: next.inventory.meat + pick };
+            next.log = [...next.log, `You hunt for ${hourCost} hours and catch prey. (+${pick} meat to inventory, ${next.hoursRemaining}h left)`];
+            const left = meat - pick;
+            if (left > 0) next.log = [...next.log, `You couldn't carry ${left} meat and leave it behind.`];
+          } else {
+            next.log = [...next.log, `You hunt and succeed, but can't carry any meat. (${next.hoursRemaining}h left)`];
+          }
         } else {
           next.log = [...next.log, `You hunt for ${hourCost} hours but find nothing. (${next.hoursRemaining}h left)`];
         }
@@ -317,21 +472,38 @@ export function useGame() {
           next.inventory = { ...next.inventory, meat: next.inventory.meat - 1 };
           hungerGained = 3;
           consumed = "meat";
+          // meat does not restore thirst
+          next.thirst = clamp(next.thirst);
         } else if (next.inventory.berries > 0) {
           next.inventory = { ...next.inventory, berries: next.inventory.berries - 1 };
-          hungerGained = 2;
+          // berries are less filling than cooked meat
+          hungerGained = 1;
+          // berries provide a small amount of hydration
+          const thirstGained = 1;
+          next.thirst = clamp(next.thirst + thirstGained);
           consumed = "berries";
         }
         if (hungerGained > 0) {
           next.hunger = clamp(next.hunger + hungerGained);
-          next.log = [...next.log, `You eat ${consumed} for ${hourCost} hour. (+${hungerGained} hunger, ${next.hoursRemaining}h left)`];
+          // include thirst gain in log when present
+          const thirstPart = consumed === "berries" ? `, +1 thirst` : "";
+          next.log = [...next.log, `You eat ${consumed} for ${hourCost} hour. (+${hungerGained} hunger${thirstPart}, ${next.hoursRemaining}h left)`];
         } else {
           next.log = [...next.log, `You spend ${hourCost} hour looking for food but have nothing to eat. (${next.hoursRemaining}h left)`];
         }
       }
 
+      if (action === "drink") {
+        // Simple immediate hydration action: restore thirst to full.
+        const prevThirst = s.thirst;
+        const restoredTo = 10;
+        const gained = Math.max(0, restoredTo - (prevThirst || 0));
+        next.thirst = clamp(restoredTo);
+        next.log = [...next.log, `You drink and feel rehydrated. (+${gained} thirst, ${next.hoursRemaining}h left)`];
+      }
+
       if (action === "rest") {
-        const gain = 3 + ((s.voiceLevel || 0) >= 4 ? 1 : 0);
+        const gain = 3;
         next.rest = clamp(next.rest + gain);
         next.log = [...next.log, `You rest for ${hourCost} hours. (+${gain} rest, ${next.hoursRemaining}h left)`];
       }
@@ -354,7 +526,8 @@ export function useGame() {
             next.fire = res.fire;
             next.rest = res.rest;
             next.storyCooldowns = res.storyCooldowns;
-            next.voiceLevel = res.voiceLevel;
+            // voiceLevel progression removed in survival pivot
+            if (res.artifactLevels) next.artifactLevels = res.artifactLevels;
             next.log = [...next.log, ...res.logs];
           }
         }
@@ -362,7 +535,7 @@ export function useGame() {
 
       if (action === "explore") {
         // Procedural story engine: always attempt a major beat on explore
-        const engine = makeEngine(next.storySeed + next.storySerial, { risk: "moderate" });
+  const engine = makeEngine(next.storySeed + next.storySerial, { risk: "moderate", survival: true });
         const view: GameView = {
           fire: next.fire,
           hunger: next.hunger,
@@ -431,15 +604,22 @@ export function useGame() {
                 berries: Math.max(0, next.inventory.berries + (d.inventory.berries || 0)),
                 artifactsByType: next.inventory.artifactsByType || { idol: 0, shard: 0, heart: 0, feather: 0 },
               } as Inventory;
-              const addArtifacts = d.inventory.artifacts || 0;
-              if (addArtifacts > 0) {
-                for (let i = 0; i < addArtifacts; i++) {
-                  const r = engine.rng.next();
-                  const pick = r < 0.25 ? "idol" : r < 0.5 ? "shard" : r < 0.75 ? "heart" : "feather";
-                  inv.artifactsByType = { ...inv.artifactsByType!, [pick]: (inv.artifactsByType?.[pick] || 0) + 1 } as NonNullable<Inventory["artifactsByType"]>;
+                const addArtifacts = d.inventory.artifacts || 0;
+                if (addArtifacts > 0) {
+                  for (let i = 0; i < addArtifacts; i++) {
+                    const r = engine.rng.next();
+                    const pick = r < 0.25 ? "idol" : r < 0.5 ? "shard" : r < 0.75 ? "heart" : "feather";
+                    const weight = ITEM_WEIGHTS[pick] || ITEM_WEIGHTS.artifacts;
+                    const curLoad = getInventoryLoad(inv);
+                    const cap = next.carryCapacity || 0;
+                    if (curLoad + weight <= cap) {
+                      inv.artifactsByType = { ...inv.artifactsByType!, [pick]: (inv.artifactsByType?.[pick] || 0) + 1 } as NonNullable<Inventory["artifactsByType"]>;
+                    } else {
+                      next.log = [...next.log, `You find a ${pick} but have no capacity to carry it.`];
+                    }
+                  }
+                  inv = syncArtifactTotal(inv);
                 }
-                inv = syncArtifactTotal(inv);
-              }
               next.inventory = inv;
             }
             next.storyFlags = applied.nextFlags;
@@ -468,7 +648,7 @@ export function useGame() {
 
       // light flavor for other actions (engine handles probability)
       if (action !== "explore") {
-        const engine = makeEngine(next.storySeed + next.storySerial, { risk: "moderate" });
+  const engine = makeEngine(next.storySeed + next.storySerial, { risk: "moderate", survival: true });
         const view: GameView = {
           fire: next.fire,
           hunger: next.hunger,
@@ -481,8 +661,12 @@ export function useGame() {
           storyFlags: next.storyFlags,
           storyCooldowns: next.storyCooldowns,
         };
-        const ctx = { action, day: next.daysSurvived, hoursRemaining: next.hoursRemaining } as const;
-        const line = engine.generateFlavor(view, ctx);
+        // generateFlavor expects an ActionContext; map unsupported internal actions (like 'drink')
+  // to a nearby flavorable action so the engine can provide a line without changing game logic.
+  type FlavorAction = "gather" | "hunt" | "rest" | "explore" | "tend" | "eat" | "offer";
+  const flavorAction: FlavorAction = (action === "drink" ? "rest" : (action as FlavorAction));
+  const flavorCtx = { action: flavorAction, day: next.daysSurvived, hoursRemaining: next.hoursRemaining } as const;
+  const line = engine.generateFlavor(view, flavorCtx);
         if (line) next.log = [...next.log, line];
       }
 
@@ -505,6 +689,23 @@ export function useGame() {
     return { ...inv, artifacts: total };
   }
 
+  function getInventoryLoad(inv: Inventory) {
+    const t = inv.artifactsByType || { idol: 0, shard: 0, heart: 0, feather: 0 };
+    let load = 0;
+    load += (inv.wood || 0) * ITEM_WEIGHTS.wood;
+    load += (inv.meat || 0) * ITEM_WEIGHTS.meat;
+    load += (inv.berries || 0) * ITEM_WEIGHTS.berries;
+    if (inv.artifactsByType) {
+      load += (t.idol || 0) * ITEM_WEIGHTS.idol;
+      load += (t.shard || 0) * ITEM_WEIGHTS.shard;
+      load += (t.heart || 0) * ITEM_WEIGHTS.heart;
+      load += (t.feather || 0) * ITEM_WEIGHTS.feather;
+    } else {
+      load += (inv.artifacts || 0) * ITEM_WEIGHTS.artifacts;
+    }
+    return load;
+  }
+
   function pickFirstAvailableArtifact(t: NonNullable<Inventory["artifactsByType"]>): ArtifactType | null {
     if ((t.idol || 0) > 0) return "idol";
     if ((t.shard || 0) > 0) return "shard";
@@ -513,7 +714,14 @@ export function useGame() {
     return null;
   }
 
-  function internalOfferArtifact(next: GameState, s: GameState, type: ArtifactType) {
+  function internalOfferArtifact(next: GameState, s: GameState, type: ArtifactType): {
+    inventory: Inventory;
+    fire: number;
+    rest: number;
+    storyCooldowns: Record<string, number>;
+    logs: string[];
+    artifactLevels?: GameState["artifactLevels"];
+  } {
     const cdKey = "ability:offer-ember";
     const logs: string[] = [];
     const counts = { ...(next.inventory.artifactsByType || { idol: 0, shard: 0, heart: 0, feather: 0 }) } as NonNullable<Inventory["artifactsByType"]>;
@@ -522,10 +730,10 @@ export function useGame() {
     inv = syncArtifactTotal(inv);
     const fire = clamp(next.fire + 4);
     const rest = clamp(next.rest + 1);
-    const newVoice = (s.voiceLevel || 0) + 1;
+  // bump artifact level for this artifact type (persistent across runs)
+  const currentLevels = s.artifactLevels || { idol: 0, shard: 0, heart: 0, feather: 0 };
+  const newLevels = { ...currentLevels, [type]: (currentLevels[type] || 0) + 1 } as NonNullable<GameState["artifactLevels"]>;
 
-    const skillCount = Object.values(s.skills).filter(Boolean).length;
-    const voiceRich = newVoice >= 3 || skillCount >= 2;
     if (type === "idol") {
       logs.push(`You offer an ancient idol to the ember. (+4 fire, +1 rest, ${next.hoursRemaining}h left)`);
       logs.push("Gold eyes melt. The ember whispers of forgotten rites.");
@@ -555,11 +763,11 @@ export function useGame() {
       }
     } else if (type === "heart") {
       logs.push(`You offer a heart of ice. (+4 fire, +1 rest, ${next.hoursRemaining}h left)`);
-      logs.push(voiceRich ? "Steam rises like a prayer. The ember speaks a name you almost know." : "Frost hisses, vanishing to nothing.");
+      logs.push("Steam rises, then the air settles.");
     }
 
     const storyCooldowns = { ...s.storyCooldowns, [cdKey]: s.daysSurvived + 1 };
-    return { inventory: inv, fire, rest, voiceLevel: newVoice, storyCooldowns, logs };
+    return { inventory: inv, fire, rest, storyCooldowns, logs, artifactLevels: newLevels };
   }
 
   function offerArtifact(type: ArtifactType) {
@@ -586,8 +794,7 @@ export function useGame() {
       next.fire = res.fire;
       next.rest = res.rest;
       next.storyCooldowns = res.storyCooldowns;
-      next.voiceLevel = res.voiceLevel;
-      setVoiceLevel(res.voiceLevel || 0);
+  if (res.artifactLevels) next.artifactLevels = res.artifactLevels;
       next.log = [...next.log, ...res.logs];
       return next;
     });
@@ -625,7 +832,8 @@ export function useGame() {
         return { ...s, log: [...s.log, `You try to eat ${foodType} but have none.`] } as GameState;
       }
 
-      const hungerPerItem = foodType === "meat" ? 3 : 2;
+      const hungerPerItem = foodType === "meat" ? 3 : 1;
+      const thirstPerItem = foodType === "meat" ? 0 : 1;
       const totalHunger = hungerPerItem * use;
 
       const next = { ...s } as GameState;
@@ -635,8 +843,12 @@ export function useGame() {
         next.inventory = { ...next.inventory, berries: next.inventory.berries - use } as Inventory;
       }
       next.hunger = clamp(next.hunger + totalHunger);
+      // apply thirst restoration from consumed items
+      next.thirst = clamp(next.thirst + thirstPerItem * use);
       next.hoursRemaining = next.hoursRemaining - totalHours;
-      next.log = [...next.log, `You eat ${use} ${foodType} for ${totalHours} hour${totalHours > 1 ? "s" : ""}. (+${totalHunger} hunger, ${next.hoursRemaining}h left)`];
+  // include thirst gain in the log when applicable
+  const thirstPart = thirstPerItem > 0 ? `, +${thirstPerItem * use} thirst` : "";
+  next.log = [...next.log, `You eat ${use} ${foodType} for ${totalHours} hour${totalHours > 1 ? "s" : ""}. (+${totalHunger} hunger${thirstPart}, ${next.hoursRemaining}h left)`];
 
       return next;
     });
@@ -651,7 +863,7 @@ export function useGame() {
       const opt = prompt.options[optionIndex];
       if (!opt) return s;
 
-      const engine = makeEngine(s.storySeed + s.storySerial + 7, { risk: "moderate" });
+  const engine = makeEngine(s.storySeed + s.storySerial + 7, { risk: "moderate", survival: true });
       const view: GameView = {
         fire: s.fire,
         hunger: s.hunger,
@@ -689,7 +901,14 @@ export function useGame() {
           for (let i = 0; i < addArtifacts; i++) {
             const r = engine.rng.next();
             const pick = r < 0.25 ? "idol" : r < 0.5 ? "shard" : r < 0.75 ? "heart" : "feather";
-            inv.artifactsByType = { ...inv.artifactsByType!, [pick]: (inv.artifactsByType?.[pick] || 0) + 1 } as NonNullable<Inventory["artifactsByType"]>;
+            const weight = ITEM_WEIGHTS[pick] || ITEM_WEIGHTS.artifacts;
+            const curLoad = getInventoryLoad(inv);
+            const cap = next.carryCapacity || 0;
+            if (curLoad + weight <= cap) {
+              inv.artifactsByType = { ...inv.artifactsByType!, [pick]: (inv.artifactsByType?.[pick] || 0) + 1 } as NonNullable<Inventory["artifactsByType"]>;
+            } else {
+              next.log = [...next.log, `You find a ${pick} but have no capacity to carry it.`];
+            }
           }
           inv = syncArtifactTotal(inv);
         }
@@ -708,15 +927,16 @@ export function useGame() {
 
   function resetRun() {
     setState((s) => ({
-      fire: 5,
+      fire: 0,
       hunger: 8,
       rest: 8,
+      thirst: 8,
       wood: 3,
       daysSurvived: 0,
       hoursRemaining: 24,
       log: [
-        "You wake again beside the ember. Different hands. Same cold.",
-        "The ember remembers what you do not. Keep it alive."
+        "You wake again, disoriented. The world is unfamiliar.",
+        "Objective: survive as long as possible."
       ],
       isRunning: true,
       xp: 0,
@@ -729,6 +949,8 @@ export function useGame() {
         artifactsByType: { idol: 0, shard: 0, heart: 0, feather: 0 },
       },
       voiceLevel: s.voiceLevel,
+      // preserve any crafted/earned carry capacity across resets
+      carryCapacity: s.carryCapacity,
       storySeed: Math.floor(Math.random() * 0xffffffff) >>> 0,
       storySerial: 0,
       storyFlags: {},
@@ -749,9 +971,16 @@ export function useGame() {
 
       const next = { ...s } as GameState;
 
-      // Apply daily costs
-      next.hunger = clamp(next.hunger - 2);
-      next.rest = clamp(next.rest - 1);
+  // Apply daily costs
+  next.hunger = clamp(next.hunger - 2);
+  next.rest = clamp(next.rest - 1);
+  // base thirst decay
+  let thirstDecay = 2;
+  // hotter seasons increase thirst decay
+  if (next.season === "summer") thirstDecay += 1;
+  // rain or cold snaps reduce thirst pressure slightly
+  if (next.weather?.type === "rain" || next.weather?.type === "cold-snap") thirstDecay = Math.max(0, thirstDecay - 1);
+  next.thirst = clamp(next.thirst - thirstDecay);
 
       // Fire decay
       const decay = s.skills.fireMastery ? 0 : 1;
@@ -759,24 +988,89 @@ export function useGame() {
 
       // Reset hours for new day
       next.hoursRemaining = 24;
+      // Advance day counter first so weather/season can be deterministic by day
       next.daysSurvived = next.daysSurvived + 1;
       const decayParts = ["-2 hunger", "-1 rest"]; if (decay > 0) decayParts.push("-1 fire");
-      next.log = [
-        ...next.log,
-        `Night passes. (${decayParts.join(", ")})`,
-        `Day ${next.daysSurvived} begins. You have 24 hours.`,
-      ];
 
-      // Check end conditions
-      if (next.fire <= 0) {
-        next.isRunning = false;
-        next.xp = next.daysSurvived;
-        next.log = [...next.log, "Your fire goes out. The cold takes you."];
+      // Generate season (simple cycle every 10 days) and deterministic weather
+      try {
+  const engine = makeEngine(next.storySeed + next.daysSurvived, { risk: "moderate" });
+        // season cycles every 10 days; offset by storySeed for variety
+        const seasonNames: GameState["season"][] = ["spring", "summer", "autumn", "winter"];
+        const seasonIndex = Math.floor((next.daysSurvived / 10) + ((next.storySeed % 10) / 10)) % 4;
+        const season = seasonNames[seasonIndex];
+        next.season = season;
+
+        // base temperature per season
+        const baseTemp = season === "spring" ? 8 : season === "summer" ? 12 : season === "autumn" ? 6 : 0;
+        const tempVariance = engine.rng.int(-3, 3);
+        const temp = baseTemp + tempVariance;
+
+        // choose weather type with season-influenced weights
+        // clear: common; rain: more likely in spring/autumn; snow: winter/very cold; cold-snap: rare
+  let pClear = 60;
+  const pRain = season === "spring" || season === "autumn" ? 25 : season === "summer" ? 15 : 10;
+  let pSnow = season === "winter" ? 15 : 0;
+  let pCold = 5;
+
+        // if temp is very low, prefer snow / cold
+        if (temp <= 2) {
+          pSnow = Math.max(pSnow, 25);
+          pCold = Math.max(pCold, 10);
+          pClear = Math.max(10, pClear - 20);
+        }
+
+        const roll = engine.rng.int(1, pClear + pRain + pSnow + pCold);
+  let cursor = pClear;
+  let chosen: "clear" | "rain" | "snow" | "cold-snap" = "clear";
+  if (roll <= cursor) chosen = "clear";
+  else if (roll <= (cursor += pRain)) chosen = "rain";
+  else if (roll <= (cursor += pSnow)) chosen = "snow";
+  else chosen = "cold-snap";
+
+        next.weather = { type: chosen, temp };
+
+        // apply weather modifiers to daily decay (rain/snow/cold makes fire suffer more)
+        if (chosen === "rain") {
+          next.fire = clamp(next.fire - 1);
+          decayParts.push("rain: -1 fire");
+        }
+        if (chosen === "snow") {
+          next.fire = clamp(next.fire - 1);
+          decayParts.push("snow: -1 fire");
+        }
+        if (chosen === "cold-snap") {
+          next.fire = clamp(next.fire - 2);
+          next.hunger = clamp(next.hunger - 1);
+          decayParts.push("cold snap: -2 fire, -1 hunger");
+        }
+
+        // Note: we generate and persist weather, but do not append a separate weather line to the
+        // day log (it is shown in the Stats header UI). Keep only the standard day-start lines.
+        next.log = [
+          ...next.log,
+          `Night passes. (${decayParts.join(", ")})`,
+          `Day ${next.daysSurvived} begins. You have 24 hours.`,
+        ];
+      } catch {
+        // fallback log if weather generation fails
+        next.log = [
+          ...next.log,
+          `Night passes. (${decayParts.join(", ")})`,
+          `Day ${next.daysSurvived} begins. You have 24 hours.`,
+        ];
       }
+
+      // Check end conditions (fire no longer kills the player; survival depends on hunger/rest)
       if (next.hunger <= 0) {
         next.isRunning = false;
         next.xp = next.daysSurvived;
         next.log = [...next.log, "You starve from hunger."];
+      }
+      if (next.thirst <= 0) {
+        next.isRunning = false;
+        next.xp = next.daysSurvived;
+        next.log = [...next.log, "You die of thirst."];
       }
       if (next.rest <= 0) {
         next.isRunning = false;
